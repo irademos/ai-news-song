@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daily Spin</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-alt: #1f2933;
+      --accent: #f59e0b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      font-family: "Inter", "Segoe UI", Roboto, system-ui, -apple-system, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, rgba(245, 158, 11, 0.08), transparent 45%),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      padding: 2rem;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: minmax(240px, 280px) minmax(320px, 640px);
+      gap: 2rem;
+      width: min(1080px, 100%);
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(24px);
+      border-radius: 28px;
+      padding: 2rem;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.4);
+    }
+
+    @media (max-width: 860px) {
+      body {
+        padding: 1rem;
+      }
+
+      .app-shell {
+        grid-template-columns: 1fr;
+        padding: 1.5rem;
+      }
+    }
+
+    h1, h2, h3, p {
+      margin: 0;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .sidebar header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .sidebar header h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+
+    .sidebar header p {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .song-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      overflow-y: auto;
+      max-height: calc(100vh - 8rem);
+    }
+
+    .song-list button {
+      width: 100%;
+      background: transparent;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      color: inherit;
+      padding: 0.9rem 1rem;
+      border-radius: 14px;
+      text-align: left;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.2s ease, background 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .song-list button:hover {
+      transform: translateY(-2px);
+      border-color: rgba(245, 158, 11, 0.5);
+      background: rgba(15, 23, 42, 0.55);
+    }
+
+    .song-list button.active {
+      border-color: var(--accent);
+      background: rgba(245, 158, 11, 0.12);
+    }
+
+    .song-title {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    .song-meta {
+      font-size: 0.85rem;
+      color: var(--muted);
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+    }
+
+    .player-panel {
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.92), rgba(17, 24, 39, 0.85));
+      border-radius: 24px;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      justify-content: space-between;
+      box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.07);
+    }
+
+    .player-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .player-header h1 {
+      font-size: clamp(2rem, 4vw, 2.8rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .player-header p {
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+
+    .player-header .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.85rem;
+      background: rgba(245, 158, 11, 0.18);
+      color: var(--accent);
+      border-radius: 999px;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+    }
+
+    audio {
+      width: 100%;
+      border-radius: 12px;
+      height: 54px;
+      background: rgba(15, 23, 42, 0.6);
+    }
+
+    .lyrics {
+      font-size: 0.95rem;
+      line-height: 1.7;
+      color: rgba(226, 232, 240, 0.9);
+      max-height: 200px;
+      overflow-y: auto;
+      padding-right: 0.75rem;
+    }
+
+    .empty-state {
+      color: var(--muted);
+      text-align: center;
+      padding: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <header>
+        <h2>Recent Spins</h2>
+        <p>Catch up on the tracks we've highlighted this week.</p>
+      </header>
+      <ul class="song-list" id="songList"></ul>
+    </aside>
+
+    <main class="player-panel">
+      <div class="player-header">
+        <span class="tag" id="songTag">Now Playing</span>
+        <h1 id="songTitle">Loading...</h1>
+        <p id="songMeta">Please select a song from the list.</p>
+      </div>
+
+      <audio id="audioPlayer" controls preload="none">
+        <source id="audioSource" src="" type="audio/mpeg" />
+        Your browser does not support the audio element.
+      </audio>
+
+      <section class="lyrics" id="songDescription">
+        Choose a song to read a short story about why it made the Daily Spin playlist.
+      </section>
+    </main>
+  </div>
+
+  <template id="songItemTemplate">
+    <li>
+      <button type="button">
+        <span class="song-title"></span>
+        <span class="song-meta"></span>
+      </button>
+    </li>
+  </template>
+
+  <script>
+    async function loadSongs() {
+      try {
+        const response = await fetch('/api/songs');
+        if (!response.ok) throw new Error('Unable to load songs');
+        const songs = await response.json();
+        renderSongList(songs);
+        if (songs.length > 0) {
+          setCurrentSong(songs[0], songs);
+        } else {
+          showEmptyState();
+        }
+      } catch (err) {
+        console.error(err);
+        showEmptyState('We had trouble loading today\'s playlist. Please refresh to try again.');
+      }
+    }
+
+    function showEmptyState(message = 'No songs are available right now. Check back soon!') {
+      const list = document.getElementById('songList');
+      list.innerHTML = `<li class="empty-state">${message}</li>`;
+    }
+
+    function renderSongList(songs) {
+      const list = document.getElementById('songList');
+      const template = document.getElementById('songItemTemplate');
+      list.innerHTML = '';
+
+      songs.forEach((song, index) => {
+        const clone = template.content.cloneNode(true);
+        const button = clone.querySelector('button');
+        const title = clone.querySelector('.song-title');
+        const meta = clone.querySelector('.song-meta');
+
+        title.textContent = song.title;
+        meta.textContent = `${song.artist} • ${formatDate(song.date)}`;
+
+        button.dataset.index = index;
+        button.addEventListener('click', () => setCurrentSong(song, songs));
+
+        list.appendChild(clone);
+      });
+    }
+
+    function formatDate(dateString) {
+      const date = new Date(dateString + 'T00:00:00');
+      return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    function setCurrentSong(song, songs) {
+      const title = document.getElementById('songTitle');
+      const meta = document.getElementById('songMeta');
+      const description = document.getElementById('songDescription');
+      const audio = document.getElementById('audioPlayer');
+      const source = document.getElementById('audioSource');
+      const tag = document.getElementById('songTag');
+
+      title.textContent = song.title;
+      meta.textContent = `${song.artist} — featured ${formatDate(song.date)}`;
+      description.textContent = song.description;
+      source.src = song.streamUrl;
+      audio.load();
+      audio.play().catch(() => {
+        // Ignore autoplay rejection, user interaction will be required on some browsers
+      });
+
+      if (song.isToday) {
+        tag.textContent = 'Now Playing';
+        tag.style.background = 'rgba(245, 158, 11, 0.18)';
+        tag.style.color = 'var(--accent)';
+      } else {
+        tag.textContent = 'From the Archives';
+        tag.style.background = 'rgba(148, 163, 184, 0.2)';
+        tag.style.color = 'var(--text)';
+      }
+
+      const buttons = document.querySelectorAll('.song-list button');
+      buttons.forEach((button) => {
+        const index = Number(button.dataset.index);
+        const isActive = songs[index].title === song.title && songs[index].date === song.date;
+        button.classList.toggle('active', isActive);
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', loadSongs);
+  </script>
+</body>
+</html>
