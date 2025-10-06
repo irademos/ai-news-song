@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>All Events</title>
+  <style>
+    .event { border-bottom: 1px solid #ccc; padding: 1em 0; }
+    .icons a { margin-right: 10px; text-decoration: none; font-size: 0.9em; }
+    .icons a:hover { text-decoration: underline; }
+    .icons .cl { font-weight: bold; background: #222; color: white; padding: 2px 6px; border-radius: 4px; }
+    .controls { margin-bottom: 1em; }
+    .controls input, .controls button { margin-right: 10px; }
+    a.location-link {
+      color: inherit;
+      text-decoration: none;
+    }
+    a.location-link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <h1>Events</h1>
+
+  <div class="controls">
+    <button id="loadButton" onclick="startScrape()">Load Events</button>
+    <input type="text" id="zipCode" placeholder="Enter ZIP code" style="display:none;" />
+    <button id="distBtn" onclick="filterEvents('distance')" style="display:none;">Sort by Distance</button>
+    <button id="timeBtn" onclick="filterEvents('time')" style="display:none;">Sort by Time</button>
+    <button id="todayBtn" onclick="filterEvents('today')" style="display:none;">Today</button>
+    <button id="tomorrowBtn" onclick="filterEvents('tomorrow')" style="display:none;">Tomorrow</button>
+  </div>
+
+  <div id="eventsContainer"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/moment@2.29.1/moment.min.js"></script>
+  <script>
+    let allEvents = [];
+    let zipCode = '';
+
+    async function startScrape() {
+      document.getElementById('loadButton').disabled = true;
+      document.getElementById('eventsContainer').innerHTML = '<p>Scraping in progress...</p>';
+
+      const res = await fetch('/scrape');
+      allEvents = await res.json();
+
+      renderEvents(allEvents);
+
+      document.getElementById('todayBtn').style.display = 'inline-block';
+      document.getElementById('tomorrowBtn').style.display = 'inline-block';
+      document.getElementById('zipCode').style.display = 'inline-block';
+      document.getElementById('distBtn').style.display = 'inline-block';
+      document.getElementById('timeBtn').style.display = 'inline-block';
+    }
+
+    function renderEvents(events) {
+      const container = document.getElementById('eventsContainer');
+      container.innerHTML = '';
+      if (events == "No events found.") {
+        container.innerHTML += events;
+        return;
+      } 
+      for (const event of events) {
+        container.innerHTML += `
+          <div class="event">
+            <strong><a href="${event.website}" target="_blank" class="location-link">${event.title}</a></strong><br>
+            <a href="${event.mapsUrl}" target="_blank" class="location-link">${event.venue || event.address}${event.distance ? `, ${event.distance} mi.` : ``}</a><br>
+            ${event.date}<br>
+            Cost: ${event.cost}<br>
+            ${event.description || ''}<br><br>
+            <div class="icons">
+              ${event.mapsUrl ? `<a href="${event.mapsUrl}" target="_blank">📍Maps   </a>` : ''}
+              ${event.website ? `<a href="${event.website}" target="_blank">🌐 More Info   </a>` : ''}
+              ${event.source === 'Creative Loafing' ? `<a href="${event.sourceUrl}" target="_blank">🥖 Loaf</a>` : ''}
+            </div>
+          </div>`;
+      }
+    }
+
+    function parseEventDate(dateStr) {
+      const dateFormat = "ddd M/D h:mmA"; // Define the format for parsing ("Fri 5/2 1:00PM")
+      const parsedDate = moment(dateStr, dateFormat);
+
+      if (!parsedDate.isValid()) {
+        console.warn('Parsed date invalid:', dateStr);
+        return new Date(0); // Return fallback date
+      }
+      
+      return parsedDate.toDate(); // Convert to native JavaScript Date object
+    }
+
+
+    async function filterEvents(filter_type) {
+      let filtered = [];
+
+      const zip = document.getElementById('zipCode').value;
+      if (zip && zip !== zipCode) {
+        const res = await fetch('/getFilteredEvents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ zip, allEvents }),
+        });
+        if (res) {
+          filtered = await res.json();
+          allEvents = filtered;
+          zipCode = zip;
+        }
+      } else if (filter_type === 'distance') {
+        filtered = allEvents.sort((a, b) => {
+          const distA = a.distance;
+          const distB = b.distance;
+
+          if (distA !== distB) return distA - distB;
+          const costA = parseFloat(a.cost) || 0;
+          const costB = parseFloat(b.cost) || 0;
+          return costA - costB;
+        });
+      }
+      if (filter_type === 'today' || filter_type === 'tomorrow') {
+        const today = new Date();
+        const filterDate = new Date();
+
+        if (filter_type === 'tomorrow') {
+          filterDate.setDate(today.getDate() + 1);
+        }
+
+        const filterStr = `${filterDate.toLocaleDateString('en-US', { weekday: 'short' })} ${filterDate.getMonth() + 1}/${filterDate.getDate()}`;
+        filtered = [...allEvents].filter(e => e.date.startsWith(filterStr));
+      } else if (filter_type === 'time') {
+        filtered = allEvents.sort((a, b) => {
+          const dateA = parseEventDate(a.date);
+          const dateB = parseEventDate(b.date);
+          return dateA - dateB;
+        });
+      }
+      if (filtered.length > 0) {
+        renderEvents(filtered);
+      } else {
+        renderEvents("No events found.")
+      }
+    }
+  </script>
+</body>
+</html>
