@@ -1,33 +1,33 @@
-# Express.js on Vercel
+# Daily Spin
 
-Simple Express.js + Vercel example that uses Vercel Postgres to add and display users in a table.
+Daily Spin is a lightweight Express application that serves a single-page site for sharing a featured song along with a small archive of previous picks. The page renders a built-in audio player for the current track while the sidebar lists songs from earlier days that listeners can revisit.
 
-## How to Use
-
-BE sure to create a Vercel Postgres database and add you environment variables to your `.env` file. You can find an example of the `.env` file in the `.env.example` file.
-
-You can choose from one of the following two methods to use this repository:
-
-### One-Click Deploy
-
-Deploy the example using [Vercel](https://vercel.com?utm_source=github&utm_medium=readme&utm_campaign=vercel-examples):
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/git/external?repository-url=https://github.com/vercel/examples/tree/main/solutions/express&project-name=express&repository-name=express)
-
-### Clone and Deploy
+## Getting Started
 
 ```bash
-git clone https://github.com/vercel/examples/tree/main/solutions/express
+npm install
+npm start
 ```
 
-Install the Vercel CLI:
+The development server runs on port 3000 by default. Once running, open [http://localhost:3000](http://localhost:3000) to interact with the player.
 
-```bash
-npm i -g vercel
+## Project Structure
+
+```
+api/            Express application with in-memory song data
+components/     Static HTML page rendered for every request
+public/         Place any additional static assets here
 ```
 
-Then run the app at the root of the repository:
+## Customising the Playlist
 
-```bash
-vercel dev
-```
+Update the array in [`api/index.js`](api/index.js) to adjust the tracks, descriptions, or dates that populate the interface. Each song entry includes:
+
+- `title` – Track name displayed in the player and sidebar
+- `artist` – Artist credit displayed alongside the date
+- `date` – ISO string (`YYYY-MM-DD`) used to sort and render the featured day
+- `isToday` – Flag that highlights the currently featured song
+- `streamUrl` – Direct URL to an MP3 stream used by the built-in audio element
+- `description` – Short blurb rendered beneath the player
+
+The front-end automatically refreshes when reloading the page, so no extra build steps are required after editing the list.
