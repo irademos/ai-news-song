@@ -390,30 +390,97 @@
       return '';
     }
 
+    async function pollForAudio(clipIds, { timeoutMs = 120000, intervalMs = 2500 } = {}) {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const qs = encodeURIComponent(clipIds.join(','));
+        const r = await fetch(`/api/song-status?clip_ids=${qs}`);
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || 'Status check failed');
+        }
+        const { data = [] } = await r.json();
+        const ready = data.find(d => d.state === 'succeeded' && d.audio_url);
+        if (ready) return ready;
+
+        await new Promise(res => setTimeout(res, intervalMs));
+      }
+      throw new Error('Timed out waiting for Suno audio.');
+    }
+
+    function populateFromSuno(clip) {
+      // clip: { clip_id, title, audio_url, image_url, video_url, mv, duration, created_at, ... }
+      const audio = document.getElementById('audioPlayer');
+      const source = document.getElementById('audioSource');
+      const title = document.getElementById('songTitle');
+      const meta = document.getElementById('songMeta');
+      const desc = document.getElementById('songDescription');
+      const tag = document.getElementById('songTag');
+
+      title.textContent = clip.title || 'Daily Spin (Suno)';
+      meta.textContent = `Generated • ${new Date(clip.created_at || Date.now()).toLocaleString()}`;
+      desc.textContent = clip.lyrics || 'Your Suno track is ready. Enjoy!';
+      source.src = clip.audio_url;
+      audio.load();
+      audio.play().catch(() => {});
+      tag.textContent = 'Now Playing';
+      tag.style.background = 'rgba(245, 158, 11, 0.18)';
+      tag.style.color = 'var(--accent)';
+    }
+
+    async function pollForAudioIds({ taskIds = [], clipIds = [] }, { timeoutMs = 180000, intervalMs = 15000 } = {}) {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const params = taskIds.length
+          ? `task_ids=${encodeURIComponent(taskIds.join(','))}`
+          : `clip_ids=${encodeURIComponent(clipIds.join(','))}`;
+
+        const r = await fetch(`/api/song-status?${params}`);
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || 'Status check failed');
+        }
+
+        const { data = [] } = await r.json();
+        const ready = data.find(d => d.state === 'succeeded' && d.audio_url);
+        if (ready) return ready;
+
+        await new Promise(res => setTimeout(res, intervalMs));
+      }
+      throw new Error('Timed out waiting for Suno audio.');
+    }
+
+
     async function generateSongFromNews() {
       const button = document.getElementById('generateSongButton');
       const status = document.getElementById('generateSongStatus');
-
-      if (!button || !status) {
-        return;
-      }
+      if (!button || !status) return;
 
       button.disabled = true;
       status.textContent = 'Crafting a Suno prompt from today\'s headlines...';
 
       try {
         const response = await fetch('/api/generate-song', { method: 'POST' });
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
-          const message = error.error || 'Unable to reach the Suno API.';
-          throw new Error(message);
+
+        if (response.status !== 202) {
+          const e = await response.json().catch(() => ({}));
+          throw new Error(e.error || 'Failed to create Suno task');
         }
 
-        const payload = await response.json();
-        console.log('Suno API response', payload);
+        const body = await response.json();
+        const taskIds = body.task_ids || [];
+        const clipIds = body.clip_ids || [];
 
-        const summary = describeSunoResult(payload.suno);
-        status.textContent = summary || 'Your Suno song request was created! Check the console for full details.';
+        if (!taskIds.length && !clipIds.length) {
+          console.warn('Create response body:', body); // leaves a breadcrumb
+          throw new Error('Suno did not return any task or clip IDs');
+        }
+
+        status.textContent = 'Song requested. Waiting for Suno to render…';
+
+        const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs: 180000, intervalMs: 15000 });
+        populateFromSuno(clip);
+        status.textContent = 'Your Suno song is ready. Enjoy!';
       } catch (error) {
         console.error('Failed to generate Suno song:', error);
         status.textContent = error.message || 'Something went wrong while generating the song.';
@@ -421,6 +488,7 @@
         button.disabled = false;
       }
     }
+
 
     document.addEventListener('DOMContentLoaded', () => {
       loadSongs();

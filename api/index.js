@@ -88,70 +88,102 @@ app.get('/api/songs', (_req, res) => {
 });
 
 function buildSongPrompt(stories) {
-  const intro = "Write imaginative lyrics for a short song summarizing today's top news headlines. Keep the tone thoughtful but hopeful.";
+  const intro = "Write lyrics summarizing today's top news. Be specific about actual events.";
+  const lines = stories.map(s => s.summary || s.headline);
+  let prompt = `${intro} ${lines.join(' ')}`
+                .replace(/\s+/g, ' ')
+                .trim();
 
-  const formattedHeadlines = stories
-    .map((story, index) => {
-      const summaryPart = story.summary ? ` — ${story.summary}` : '';
-      return `${index + 1}. ${story.headline}${summaryPart}`;
-    })
-    .join('\n');
-
-  return `${intro}\n\nHeadlines:\n${formattedHeadlines}`;
+  // Suno non-custom mode limit ~400 chars. Leave a little headroom.
+  const MAX = 600; //2980;
+  if (prompt.length > MAX) {
+    prompt = prompt.slice(0, MAX - 1) + '…';
+  }
+  return prompt;
 }
 
-app.post('/api/generate-song', async (_req, res) => {
-  try {
-    const apiKey = process.env.suno_api;
-
-    if (!apiKey) {
-      res.status(500).json({ error: 'Suno API key is not configured.' });
-      return;
-    }
-
-    const stories = await fetchTopNews(5);
-
-    if (!stories.length) {
-      res.status(503).json({ error: 'No news headlines are available right now.' });
-      return;
-    }
-
-    const prompt = buildSongPrompt(stories);
-
-    const response = await fetch('https://api.sunoapi.com/api/v1/suno/create', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        custom_mode: false,
-        gpt_description_prompt: prompt,
-        make_instrumental: false,
-        mv: 'chirp-v5',
-      }),
-    });
-
-    const rawBody = await response.text();
-
-    if (!response.ok) {
-      res.status(response.status).json({ error: 'Suno API request failed.', details: rawBody });
-      return;
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(rawBody);
-    } catch (error) {
-      parsed = rawBody;
-    }
-
-    res.json({ success: true, prompt, suno: parsed });
-  } catch (error) {
-    console.error('Unable to generate song with Suno API:', error);
-    res.status(500).json({ error: 'Unable to generate song at this time.' });
+async function generateSongFromNews() {
+  const createRes = await fetch('/api/generate-song', { method: 'POST' });
+  if (createRes.status !== 202) {
+    const err = await createRes.json().catch(() => ({}));
+    throw new Error(err.error || 'Create failed');
   }
+
+  const { clip_ids } = await createRes.json();
+  const audio = await pollForAudio(clip_ids);
+  return audio; // { clip_id, audio_url, ... }
+}
+
+async function pollForAudio(clipIds, { timeoutMs = 120000, intervalMs = 2500 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const qs = encodeURIComponent(clipIds.join(','));
+    const r = await fetch(`/api/song-status?clip_ids=${qs}`);
+    const { data = [] } = await r.json();
+
+    const ready = data.find(d => d.state === 'succeeded' && d.audio_url);
+    if (ready) return ready;
+
+    await new Promise(res => setTimeout(res, intervalMs));
+  }
+  throw new Error('Timed out waiting for Suno audio');
+}
+
+
+// POST /api/generate-song
+app.post('/api/generate-song', async (_req, res) => {
+  const apiKey = process.env.suno_api || process.env.SUNO_API || process.env.SUNO_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Suno API key is not configured.' });
+
+  const stories = await fetchTopNews(5);
+  if (!stories.length) return res.status(503).json({ error: 'No news headlines are available right now.' });
+
+  const prompt = buildSongPrompt(stories);
+  console.log(prompt);
+
+  const resp = await fetch('https://api.sunoapi.com/api/v1/suno/create', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      custom_mode: false,
+      gpt_description_prompt: prompt,
+      make_instrumental: false,
+      mv: 'chirp-v5',
+    }),
+  });
+
+  const raw = await resp.text();
+  if (!resp.ok) {
+    let details; try { details = JSON.parse(raw); } catch { details = raw; }
+    return res.status(resp.status).json({ error: 'Suno create failed', details, promptLen: prompt.length });
+  }
+
+  let data; try { data = JSON.parse(raw); } catch { data = raw; }
+
+  // Normalize IDs from various possible shapes
+  const toArray = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
+  const list = Array.isArray(data?.data) ? data.data : toArray(data);
+
+  const taskIds = [];
+  const clipIds = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    if (item.task_id) taskIds.push(item.task_id);
+    if (item.id && !item.clip_id && !item.song_id) taskIds.push(item.id); // some payloads use "id" for task
+    if (item.clip_id) clipIds.push(item.clip_id);
+    if (item.song_id) clipIds.push(item.song_id); // sometimes named differently
+  }
+
+  // If we got nothing, return the raw body to debug quickly
+  if (!taskIds.length && !clipIds.length) {
+    return res.status(202).json({ task_ids: [], clip_ids: [], raw: data, prompt });
+  }
+
+  return res.status(202).json({ task_ids: [...new Set(taskIds)], clip_ids: [...new Set(clipIds)], prompt });
 });
+
+
+
 
 const port = process.env.PORT || 3000;
 
