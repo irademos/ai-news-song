@@ -196,6 +196,47 @@
       text-align: center;
       padding: 2rem;
     }
+
+    .generate-song {
+      margin-top: auto;
+      padding-top: 1.25rem;
+      border-top: 1px solid rgba(148, 163, 184, 0.15);
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .generate-song button {
+      appearance: none;
+      border: none;
+      border-radius: 14px;
+      padding: 0.85rem 1.2rem;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.92), rgba(234, 179, 8, 0.85));
+      color: #0f172a;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.2s ease;
+      box-shadow: 0 12px 32px rgba(245, 158, 11, 0.28);
+    }
+
+    .generate-song button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 36px rgba(245, 158, 11, 0.34);
+    }
+
+    .generate-song button:disabled {
+      cursor: not-allowed;
+      opacity: 0.7;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .generate-song-status {
+      font-size: 0.9rem;
+      color: var(--muted);
+      min-height: 1.4em;
+    }
   </style>
 </head>
 <body>
@@ -222,6 +263,11 @@
 
       <section class="lyrics" id="songDescription">
         Choose a song to read a short story about why it made the Daily Spin playlist.
+      </section>
+
+      <section class="generate-song">
+        <button type="button" id="generateSongButton">Generate Suno Song</button>
+        <p class="generate-song-status" id="generateSongStatus" aria-live="polite"></p>
       </section>
     </main>
   </div>
@@ -319,7 +365,70 @@
       });
     }
 
-    document.addEventListener('DOMContentLoaded', loadSongs);
+    function describeSunoResult(result) {
+      if (!result || typeof result !== 'object') {
+        return '';
+      }
+
+      if (Array.isArray(result.data) && result.data.length > 0) {
+        const first = result.data[0];
+        const identifier = first.id || first.song_id || first.audio_id || first.task_id;
+        if (identifier) {
+          return `Suno request queued (ID: ${identifier}).`;
+        }
+      }
+
+      if (result.id || result.song_id || result.audio_id) {
+        const identifier = result.id || result.song_id || result.audio_id;
+        return `Suno request queued (ID: ${identifier}).`;
+      }
+
+      if (result.status) {
+        return `Suno responded with status: ${result.status}.`;
+      }
+
+      return '';
+    }
+
+    async function generateSongFromNews() {
+      const button = document.getElementById('generateSongButton');
+      const status = document.getElementById('generateSongStatus');
+
+      if (!button || !status) {
+        return;
+      }
+
+      button.disabled = true;
+      status.textContent = 'Crafting a Suno prompt from today\'s headlines...';
+
+      try {
+        const response = await fetch('/api/generate-song', { method: 'POST' });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          const message = error.error || 'Unable to reach the Suno API.';
+          throw new Error(message);
+        }
+
+        const payload = await response.json();
+        console.log('Suno API response', payload);
+
+        const summary = describeSunoResult(payload.suno);
+        status.textContent = summary || 'Your Suno song request was created! Check the console for full details.';
+      } catch (error) {
+        console.error('Failed to generate Suno song:', error);
+        status.textContent = error.message || 'Something went wrong while generating the song.';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      loadSongs();
+      const button = document.getElementById('generateSongButton');
+      if (button) {
+        button.addEventListener('click', generateSongFromNews);
+      }
+    });
   </script>
 </body>
 </html>
