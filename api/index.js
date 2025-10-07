@@ -183,6 +183,93 @@ app.post('/api/generate-song', async (_req, res) => {
 });
 
 
+function parseIds(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => (typeof entry === 'string' ? entry.split(',') : []))
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value !== 'string') return [];
+
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizeStatusPayload(body) {
+  if (!body) return { data: [] };
+
+  if (Array.isArray(body?.data)) {
+    return { data: body.data };
+  }
+
+  if (Array.isArray(body)) {
+    return { data: body };
+  }
+
+  const combined = [];
+  if (Array.isArray(body?.clips)) combined.push(...body.clips);
+  if (Array.isArray(body?.tasks)) combined.push(...body.tasks);
+
+  if (combined.length === 0 && typeof body === 'object') {
+    combined.push(body);
+  }
+
+  return { data: combined };
+}
+
+app.get('/api/song-status', async (req, res) => {
+  const apiKey = process.env.suno_api || process.env.SUNO_API || process.env.SUNO_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Suno API key is not configured.' });
+
+  const taskIds = parseIds(req.query.task_ids || req.query.ids);
+  const clipIds = parseIds(req.query.clip_ids);
+
+  if (!taskIds.length && !clipIds.length) {
+    return res.status(400).json({ error: 'You must provide task_ids or clip_ids.' });
+  }
+
+  const params = new URLSearchParams();
+  if (taskIds.length) {
+    const joined = taskIds.join(',');
+    params.set('task_ids', joined);
+    params.set('ids', joined);
+  }
+  if (clipIds.length) {
+    params.set('clip_ids', clipIds.join(','));
+  }
+
+  const remoteUrl = `https://api.sunoapi.com/api/v1/suno/status?${params.toString()}`;
+
+  try {
+    const response = await fetch(remoteUrl, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    const raw = await response.text();
+    let body;
+    try {
+      body = JSON.parse(raw);
+    } catch (error) {
+      body = raw;
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: 'Suno status request failed', details: body });
+    }
+
+    const payload = normalizeStatusPayload(body);
+    return res.json(payload);
+  } catch (error) {
+    return res.status(502).json({ error: 'Unable to contact Suno status API', details: error.message });
+  }
+});
+
+
 
 
 const port = process.env.PORT || 3000;
