@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const { fetchTopNews } = require('./newsService');
 
 const app = express();
 
@@ -57,6 +58,24 @@ const port = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`Daily Spin server listening on port ${port}`);
+    fetchTopNews()
+      .then((stories) => {
+        if (!stories.length) {
+          console.log('No fresh news stories were retrieved.');
+          return;
+        }
+
+        console.log("Today's headlines:");
+        stories.forEach((story, index) => {
+          console.log(`\n${index + 1}. ${story.headline}`);
+          if (story.summary) {
+            console.log(`   Summary: ${story.summary}`);
+          }
+        });
+      })
+      .catch((error) => {
+        console.error('Unexpected error while logging news stories:', error);
+      });
   });
 }
 
