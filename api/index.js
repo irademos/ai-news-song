@@ -95,7 +95,7 @@ function buildSongPrompt(stories) {
                 .trim();
 
   // Suno non-custom mode limit ~400 chars. Leave a little headroom.
-  const MAX = 600; //2980;
+  const MAX = 397; //2980;
   if (prompt.length > MAX) {
     prompt = prompt.slice(0, MAX - 1) + '…';
   }
@@ -233,41 +233,55 @@ app.get('/api/song-status', async (req, res) => {
     return res.status(400).json({ error: 'You must provide task_ids or clip_ids.' });
   }
 
-  const params = new URLSearchParams();
-  if (taskIds.length) {
-    const joined = taskIds.join(',');
-    params.set('task_ids', joined);
-    params.set('ids', joined);
-  }
-  if (clipIds.length) {
-    params.set('clip_ids', clipIds.join(','));
-  }
-
-  const remoteUrl = `https://api.sunoapi.com/api/v1/suno/status?${params.toString()}`;
-
   try {
-    const response = await fetch(remoteUrl, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+    let rows = [];
+
+    if (taskIds.length) {
+      // Poll the documented endpoint per task id
+      const results = await Promise.all(taskIds.map(async (id) => {
+        const r = await fetch(`https://api.sunoapi.com/api/v1/suno/task/${encodeURIComponent(id)}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        const raw = await r.text();
+        let j; try { j = JSON.parse(raw); } catch { j = raw; }
+        if (!r.ok) throw new Error(typeof j === 'object' ? JSON.stringify(j) : String(j));
+        return Array.isArray(j?.data) ? j.data : [];
+      }));
+      rows = results.flat();
+    } else {
+      // Fallback: list recent tasks, then filter by clip_ids
+      const r = await fetch('https://api.sunoapi.com/api/v1/suno/task/', {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const raw = await r.text();
+      let j; try { j = JSON.parse(raw); } catch { j = raw; }
+      if (!r.ok) return res.status(r.status).json({ error: 'Suno task fetch failed', details: j });
+      rows = Array.isArray(j?.data) ? j.data : [];
+      if (clipIds.length) rows = rows.filter(x => clipIds.includes(x.clip_id));
+    }
+
+    return res.json({
+      code: 200,
+      data: rows.map(r => ({
+        clip_id: r.clip_id,
+        state: r.state,
+        title: r.title,
+        tags: r.tags,
+        lyrics: r.lyrics,
+        image_url: r.image_url,
+        audio_url: r.audio_url,
+        video_url: r.video_url,
+        created_at: r.created_at,
+        mv: r.mv,
+        duration: r.duration,
+      })),
+      message: 'success',
     });
-
-    const raw = await response.text();
-    let body;
-    try {
-      body = JSON.parse(raw);
-    } catch (error) {
-      body = raw;
-    }
-
-    if (!response.ok) {
-      return res.status(response.status).json({ error: 'Suno status request failed', details: body });
-    }
-
-    const payload = normalizeStatusPayload(body);
-    return res.json(payload);
   } catch (error) {
-    return res.status(502).json({ error: 'Unable to contact Suno status API', details: error.message });
+    return res.status(502).json({ error: 'Suno task lookup failed', details: String(error?.message || error) });
   }
 });
+
 
 
 
