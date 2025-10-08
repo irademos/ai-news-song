@@ -38,53 +38,28 @@ loadEnv();
 const app = express();
 app.use(express.json());
 
-const songs = [
-  {
-    title: 'Neon Skyline',
-    artist: 'Aurora Lane',
-    date: '2024-04-22',
-    isToday: true,
-    streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-    description:
-      'A shimmering synth-pop ode to city lights and long walks after midnight. Layered pads pulse beneath Aurora\'s hushed vocal, making this an easy repeat listen for winding down the day.',
-  },
-  {
-    title: 'Golden Hour Coffee',
-    artist: 'Sam Torres',
-    date: '2024-04-21',
-    isToday: false,
-    streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
-    description:
-      'Acoustic guitar, brushed drums, and the gentle swirl of Sam\'s falsetto conjure the very best lazy Sunday morning vibes. Brew a cup and let this one warm the room.',
-  },
-  {
-    title: 'Bloom Sequence',
-    artist: 'Circuit Garden',
-    date: '2024-04-20',
-    isToday: false,
-    streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
-    description:
-      'Modular pulses gradually unfold into a lush, cinematic crescendo. Circuit Garden blends organic field recordings with analog drift for a track that feels alive.',
-  },
-  {
-    title: 'Skylark Avenue',
-    artist: 'Indigo Knots',
-    date: '2024-04-19',
-    isToday: false,
-    streamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
-    description:
-      'A breezy slice of indie pop packed with chiming guitars and a chorus that sticks. Indigo Knots channel the excitement of the first warm day after a long winter.',
-  },
-];
-
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'components', 'index.html'));
 });
 
-app.get('/api/songs', (_req, res) => {
-  res.json(songs);
+app.get('/api/firebase-config', (_req, res) => {
+  const config = {
+    apiKey: process.env.FIREBASE_API_KEY,
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+    databaseURL: process.env.FIREBASE_DATABASE_URL,
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.FIREBASE_APP_ID,
+  };
+
+  if (!config.apiKey || !config.projectId) {
+    return res.status(500).json({ error: 'Firebase configuration is missing.' });
+  }
+
+  res.json(config);
 });
 
 function buildSongPrompt(stories) {
