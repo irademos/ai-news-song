@@ -1,6 +1,16 @@
 const https = require('https');
 
-const NEWS_FEED_URL = 'https://feeds.bbci.co.uk/news/rss.xml';
+const NEWS_SOURCES = [
+  {
+    url: 'https://feeds.bbci.co.uk/news/rss.xml',
+    source: 'BBC News',
+  },
+  {
+    url: 'https://feeds.npr.org/1001/rss.xml',
+    source: 'NPR',
+  },
+];
+
 const DEFAULT_LIMIT = 5;
 
 function decodeEntities(text) {
@@ -98,15 +108,22 @@ function fetchXml(url) {
   return fetchWithHttps(url);
 }
 
-async function fetchTopNews(limit = DEFAULT_LIMIT) {
+async function fetchSourceStories({ url, source }, limit) {
   try {
-    const xml = await fetchXml(NEWS_FEED_URL);
-    const stories = parseFeed(xml, limit);
-    return stories;
+    const xml = await fetchXml(url);
+    return parseFeed(xml, limit).map((story) => ({ ...story, source }));
   } catch (error) {
-    console.error('Unable to retrieve latest news:', error.message);
+    console.error(`Unable to retrieve latest news from ${source}:`, error.message);
     return [];
   }
+}
+
+async function fetchTopNews(limit = DEFAULT_LIMIT) {
+  const results = await Promise.all(
+    NEWS_SOURCES.map((entry) => fetchSourceStories(entry, limit)),
+  );
+
+  return results.flat();
 }
 
 module.exports = {
