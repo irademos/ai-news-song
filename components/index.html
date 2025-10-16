@@ -62,26 +62,34 @@
     .sidebar {
       display: flex;
       flex-direction: column;
-      gap: 1.25rem;
+      gap: 2rem;
     }
 
-    .sidebar header {
+    .sidebar-section {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      max-height: 50vh;
+    }
+
+    .sidebar-section header {
       display: flex;
       flex-direction: column;
       gap: 0.35rem;
     }
 
-    .sidebar header h2 {
+    .sidebar-section header h2 {
       font-size: 1.25rem;
       font-weight: 600;
       letter-spacing: 0.01em;
     }
 
-    .sidebar header p {
+    .sidebar-section header p {
       font-size: 0.9rem;
       color: var(--muted);
     }
 
+    .headline-list,
     .song-list {
       display: flex;
       flex-direction: column;
@@ -90,9 +98,17 @@
       padding: 0;
       margin: 0;
       overflow-y: auto;
-      max-height: calc(100vh - 8rem);
     }
 
+    .headline-list {
+      max-height: 52vh;
+    }
+
+    .song-list {
+      max-height: 44vh;
+    }
+
+    .headline-list button,
     .song-list button {
       width: 100%;
       background: transparent;
@@ -108,12 +124,14 @@
       gap: 0.35rem;
     }
 
+    .headline-list button:hover,
     .song-list button:hover {
       transform: translateY(-2px);
       border-color: rgba(245, 158, 11, 0.5);
       background: rgba(15, 23, 42, 0.55);
     }
 
+    .headline-list button.active,
     .song-list button.active {
       border-color: var(--accent);
       background: rgba(245, 158, 11, 0.12);
@@ -204,7 +222,7 @@
       border-top: 1px solid rgba(148, 163, 184, 0.15);
       display: flex;
       flex-direction: column;
-      gap: 0.6rem;
+      gap: 0.75rem;
     }
 
     .generate-song-status {
@@ -212,16 +230,50 @@
       color: var(--muted);
       min-height: 1.4em;
     }
+
+    .generate-song button {
+      align-self: flex-start;
+      background: var(--accent);
+      color: #0b0f16;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.2s ease;
+    }
+
+    .generate-song button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 30px rgba(245, 158, 11, 0.35);
+    }
+
+    .generate-song button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
   </style>
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <header>
-        <h2>Top Headlines</h2>
-        <p>Select a headline to fetch the story and spin a fresh track.</p>
-      </header>
-      <ul class="song-list" id="songList"></ul>
+      <section class="sidebar-section">
+        <header>
+          <h2>Top Headlines</h2>
+          <p>Select a headline to read the story and optionally spin a new track.</p>
+        </header>
+        <ul class="headline-list" id="headlineList"></ul>
+      </section>
+
+      <section class="sidebar-section">
+        <header>
+          <h2>Recent Spins</h2>
+          <p>The latest Suno creations saved from Daily Spin.</p>
+        </header>
+        <ul class="song-list" id="songList"></ul>
+      </section>
     </aside>
 
     <main class="player-panel">
@@ -241,14 +293,24 @@
       </section>
 
       <section class="generate-song">
+        <button type="button" id="generateSongButton" disabled>Generate Song</button>
         <p class="generate-song-status" id="generateSongStatus" aria-live="polite"></p>
       </section>
     </main>
   </div>
 
+  <template id="headlineItemTemplate">
+    <li>
+      <button type="button" data-role="headline-item">
+        <span class="song-title"></span>
+        <span class="song-meta"></span>
+      </button>
+    </li>
+  </template>
+
   <template id="songItemTemplate">
     <li>
-      <button type="button">
+      <button type="button" data-role="song-item">
         <span class="song-title"></span>
         <span class="song-meta"></span>
       </button>
@@ -275,8 +337,11 @@
     let firebaseInitPromise = null;
     let headlinesCache = [];
     let currentHeadlineKey = null;
+    let selectedStory = null;
+    let latestArticleContent = '';
     let isGenerating = false;
     let latestSummary = '';
+    let generateSongButton = null;
 
     async function initFirebase() {
       if (firebaseInitPromise) return firebaseInitPromise;
@@ -296,6 +361,16 @@
       return firebaseInitPromise;
     }
 
+    function updateGenerateButton({ disabled, text } = {}) {
+      if (!generateSongButton) return;
+      if (typeof disabled === 'boolean') {
+        generateSongButton.disabled = disabled;
+      }
+      if (typeof text === 'string') {
+        generateSongButton.textContent = text;
+      }
+    }
+
     function resetNowPlaying() {
       const title = document.getElementById('songTitle');
       const meta = document.getElementById('songMeta');
@@ -305,17 +380,22 @@
       const tag = document.getElementById('songTag');
 
       title.textContent = 'Choose a headline';
-      meta.textContent = 'Select a news headline to fetch the story, get a summary, and spin a Suno track.';
+      meta.textContent = 'Select a news headline to read the story and optionally spin a Suno track.';
       description.textContent = 'Article summaries will appear here after you pick a headline.';
       source.src = '';
       audio.load();
       tag.textContent = 'Top Stories';
       tag.style.background = 'rgba(96, 165, 250, 0.18)';
       tag.style.color = '#60a5fa';
+
+      selectedStory = null;
+      latestArticleContent = '';
+      latestSummary = '';
+      updateGenerateButton({ disabled: true, text: 'Generate Song' });
     }
 
-    function showEmptyState(message = 'No headlines are available right now. Please check back soon.') {
-      const list = document.getElementById('songList');
+    function showListEmptyState(listId, message) {
+      const list = document.getElementById(listId);
       if (!list) return;
       list.innerHTML = `<li class="empty-state">${message}</li>`;
     }
@@ -328,12 +408,12 @@
 
     function renderHeadlineList(stories) {
       headlinesCache = stories;
-      const list = document.getElementById('songList');
-      const template = document.getElementById('songItemTemplate');
+      const list = document.getElementById('headlineList');
+      const template = document.getElementById('headlineItemTemplate');
       if (!list || !template) return;
 
       if (!stories.length) {
-        showEmptyState('No fresh headlines were found. Try again later.');
+        showListEmptyState('headlineList', 'No fresh headlines were found. Try again later.');
         return;
       }
 
@@ -374,6 +454,9 @@
       }
 
       currentHeadlineKey = story.key;
+      selectedStory = story;
+      latestArticleContent = '';
+      latestSummary = '';
       renderHeadlineList(headlinesCache);
 
       const title = document.getElementById('songTitle');
@@ -383,16 +466,77 @@
 
       if (title) title.textContent = story.headline || 'Selected headline';
       if (meta) meta.textContent = story.source || 'Breaking news';
-      if (description) description.textContent =
-        story.summary || 'Fetching the full article and preparing a summary…';
+      if (description)
+        description.textContent = story.summary || 'Fetching the full article…';
       if (tag) {
-        tag.textContent = 'Generating';
+        tag.textContent = 'Article';
         tag.style.background = 'rgba(245, 158, 11, 0.18)';
         tag.style.color = 'var(--accent)';
       }
 
-      updateStatus('Fetching the full article and summarising with OpenRouter…');
-      generateSongForHeadline(story);
+      updateGenerateButton({ disabled: true, text: 'Loading Article…' });
+      updateStatus('Fetching the full article…');
+      fetchAndDisplayArticle(story);
+    }
+
+    async function fetchAndDisplayArticle(story) {
+      if (!story?.link) {
+        updateStatus('The selected headline does not have a readable article link.');
+        updateGenerateButton({ disabled: true, text: 'Generate Song' });
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/article-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: story.link }),
+        });
+
+        const body = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          const message = body?.error || 'Unable to load the full article right now.';
+          throw new Error(message);
+        }
+
+        const article = (body.content || '').trim();
+        latestArticleContent = article;
+
+        if (!selectedStory || selectedStory.key !== story.key) {
+          return;
+        }
+
+        const description = document.getElementById('songDescription');
+        if (description) {
+          const summary = (story.summary || '').trim();
+          const combined = summary && article ? `${summary}\n\n${article}` : summary || article;
+          description.textContent = combined || 'The article is available, but it is empty.';
+        }
+
+        const tag = document.getElementById('songTag');
+        if (tag) {
+          tag.textContent = 'Article Ready';
+          tag.style.background = 'rgba(52, 211, 153, 0.2)';
+          tag.style.color = '#34d399';
+        }
+
+        updateStatus('Article loaded. Ready to generate a Suno song.');
+        updateGenerateButton({ disabled: false, text: 'Generate Song' });
+      } catch (error) {
+        console.error('Failed to load full article:', error);
+        if (!selectedStory || selectedStory.key !== story.key) {
+          return;
+        }
+        const description = document.getElementById('songDescription');
+        if (description) {
+          description.textContent =
+            story.summary || 'Unable to load the full article. You can still try generating a song.';
+        }
+
+        updateStatus(error.message || 'Unable to load the full article.');
+        updateGenerateButton({ disabled: false, text: 'Generate Song' });
+      }
     }
 
     async function generateSongForHeadline(story) {
@@ -407,6 +551,7 @@
 
       isGenerating = true;
       latestSummary = '';
+      updateGenerateButton({ disabled: true, text: 'Generating…' });
 
       const audio = document.getElementById('audioPlayer');
       const source = document.getElementById('audioSource');
@@ -471,15 +616,27 @@
             ? 'Your Suno song is ready and saved to Recent Spins.'
             : 'Your Suno song is ready, but it could not be saved to Recent Spins.',
         );
+        updateGenerateButton({ disabled: false, text: 'Generate Another Song' });
       } catch (error) {
         console.error('Failed to generate song from headline:', error);
         updateStatus(error.message || 'Something went wrong while generating the song.');
         latestSummary = '';
-        resetNowPlaying();
-        currentHeadlineKey = null;
-        renderHeadlineList(headlinesCache);
+        if (selectedStory && selectedStory.key === story.key) {
+          updateGenerateButton({ disabled: false, text: 'Try Again' });
+        } else {
+          updateGenerateButton({ disabled: false, text: 'Generate Song' });
+        }
       } finally {
         isGenerating = false;
+        renderHeadlineList(headlinesCache);
+        if (
+          selectedStory &&
+          selectedStory.key === story.key &&
+          generateSongButton &&
+          generateSongButton.disabled
+        ) {
+          updateGenerateButton({ disabled: false, text: 'Generate Song' });
+        }
       }
     }
 
@@ -517,7 +674,7 @@
       const template = document.getElementById('songItemTemplate');
 
       if (!songs.length) {
-        showEmptyState('No Suno songs have been generated yet. Be the first to spin one!');
+        showListEmptyState('songList', 'No Suno songs have been generated yet. Be the first to spin one!');
         return;
       }
 
@@ -585,7 +742,7 @@
         tag.style.color = 'var(--text)';
       }
 
-      document.querySelectorAll('.song-list button').forEach((button) => {
+      document.querySelectorAll('[data-role="song-item"]').forEach((button) => {
         button.classList.toggle('active', button.dataset.id === (song.id || ''));
       });
     }
@@ -627,7 +784,7 @@
           if (!songs.length) {
             currentSongId = null;
             songsCache = [];
-            showEmptyState('No Suno songs have been generated yet. Be the first to spin one!');
+            showListEmptyState('songList', 'No Suno songs have been generated yet. Be the first to spin one!');
             resetNowPlaying();
             return;
           }
@@ -646,15 +803,15 @@
         },
         (error) => {
           console.error('Failed to load songs from Firebase:', error);
-          showEmptyState('Unable to load recent spins right now.');
+          showListEmptyState('songList', 'Unable to load recent spins right now.');
         },
       );
     }
 
     async function loadHeadlines() {
-      const list = document.getElementById('songList');
-      if (list) {
-        list.innerHTML = '<li class="empty-state">Loading headlines…</li>';
+      const headlineList = document.getElementById('headlineList');
+      if (headlineList) {
+        headlineList.innerHTML = '<li class="empty-state">Loading headlines…</li>';
       }
 
       try {
@@ -669,16 +826,16 @@
         const stories = Array.isArray(payload?.stories) ? payload.stories : [];
 
         if (!stories.length) {
-          showEmptyState('No headlines are available right now. Please check back soon.');
+          showListEmptyState('headlineList', 'No headlines are available right now. Please check back soon.');
           updateStatus('Headlines are unavailable right now.');
           return;
         }
 
         renderHeadlineList(stories);
-        updateStatus('Select a headline to generate a Suno track.');
+        updateStatus('Select a headline to read the article and optionally generate a Suno track.');
       } catch (error) {
         console.error('Unable to load headlines:', error);
-        showEmptyState('We could not load the latest headlines. Please try again later.');
+        showListEmptyState('headlineList', 'We could not load the latest headlines. Please try again later.');
         updateStatus(error.message || 'Unable to load headlines right now.');
         resetNowPlaying();
       }
@@ -760,9 +917,29 @@
       });
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
+      generateSongButton = document.getElementById('generateSongButton');
+      if (generateSongButton) {
+        generateSongButton.addEventListener('click', () => {
+          if (!selectedStory) {
+            updateStatus('Select a headline to read the story before generating a song.');
+            return;
+          }
+          generateSongForHeadline(selectedStory);
+        });
+      }
+
+      showListEmptyState('songList', 'Loading recent spins…');
       resetNowPlaying();
       loadHeadlines();
+
+      try {
+        await initFirebase();
+        await subscribeToSongs();
+      } catch (error) {
+        console.error('Failed to initialise Firebase:', error);
+        showListEmptyState('songList', 'Unable to load recent spins right now.');
+      }
     });
   </script>
 </body>
