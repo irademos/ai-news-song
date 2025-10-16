@@ -5,7 +5,7 @@ const { fetchTopNews } = require('./newsService');
 
 const SUNO_PROMPT_MAX_CHARS = 397;
 const OPEN_ROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPEN_ROUTER_MODEL = process.env.OPEN_ROUTER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
+const OPEN_ROUTER_MODEL = process.env.OPEN_ROUTER_MODEL || 'deepseek/deepseek-chat-v3.1:free'; // 'meta-llama/llama-3.1-8b-instruct:free';
 
 function loadEnv() {
   const envFile = path.join(__dirname, '..', '.env');
@@ -101,7 +101,7 @@ async function generateLyricsWithOpenRouter(stories) {
     {
       role: 'system',
       content:
-        'You are an award-winning songwriter. Compose concise, vivid lyrics about current events. Keep the response under 380 characters and limit to 4-8 short lines. Do not include introductions or commentary—respond with lyrics only.',
+        'You are a news reporter writing literal, clear, factual lyrics about current events. Keep the response under 3000 characters. Do not include introductions or commentary—respond with lyrics only.',
     },
     {
       role: 'user',
@@ -109,23 +109,36 @@ async function generateLyricsWithOpenRouter(stories) {
     },
   ];
 
-  const response = await fetch(OPEN_ROUTER_API_URL, {
-    method: 'POST',
+  // const response = await fetch(OPEN_ROUTER_API_URL, {
+  //   method: 'POST',
+  //   headers: {
+  //     Authorization: `Bearer ${apiKey}`,
+  //     'Content-Type': 'application/json',
+  //     'HTTP-Referer': 'https://daily-spin.local',
+  //     'X-Title': 'Daily Spin',
+  //   },
+  //   body: JSON.stringify({
+  //     model: OPEN_ROUTER_MODEL,
+  //     messages,
+  //     max_tokens: 300,
+  //     temperature: 0.7,
+  //   }),
+  // });
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://daily-spin.local',
-      'X-Title': 'Daily Spin',
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: OPEN_ROUTER_MODEL,
-      messages,
-      max_tokens: 300,
-      temperature: 0.7,
-    }),
+      "model": "deepseek/deepseek-chat-v3.1:free",
+      messages
+    })
   });
 
   const raw = await response.text();
+  console.log(raw);
   let payload;
   try {
     payload = JSON.parse(raw);
