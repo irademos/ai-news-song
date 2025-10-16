@@ -15,13 +15,6 @@ const LYRIC_MODELS = [
   'google/gemini-1.5-flash',
   'meta/llama-3.1-8b-instruct',
 ];
-const OPENROUTER_HEADERS = {
-  'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-  // OpenRouter recommends these two for routing/analytics; not strictly required but helps reliability:
-  'HTTP-Referer': process.env.SITE_URL || 'http://localhost:3000',
-  'X-Title': 'Daily Spin', //'ai-news-song'
-  'Content-Type': 'application/json',
-};
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -32,7 +25,13 @@ async function callOpenRouterOnce({ model, messages, timeoutMs = 20000 }) {
   try {
     const res = await fetch(OPEN_ROUTER_API_URL, {
       method: 'POST',
-      headers: OPENROUTER_HEADERS,
+      headers: {
+        'Authorization': `Bearer ${process.env.OPEN_ROUTER_KEY}`,
+        // OpenRouter recommends these two for routing/analytics; not strictly required but helps reliability:
+        'HTTP-Referer': process.env.SITE_URL || 'http://localhost:3000',
+        'X-Title': 'Daily Spin', //'ai-news-song'
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
         model,
         messages,
@@ -47,9 +46,11 @@ async function callOpenRouterOnce({ model, messages, timeoutMs = 20000 }) {
       const text = await res.text().catch(() => '');
       const err = new Error(`OpenRouter ${res.status}: ${text || res.statusText}`);
       err.status = res.status;
+      console.log(err);
       throw err;
     }
 
+    console.log(res);
     const json = await res.json();
     const content = json?.choices?.[0]?.message?.content?.trim();
     if (!content) throw new Error('OpenRouter did not return content');
@@ -202,46 +203,34 @@ async function summarizeArticleWithOpenRouter({ headline, source, articleText })
     {
       role: 'system',
       content:
-        'You are an expert journalist who writes thorough but concise news summaries. Respond with polished paragraphs in plain text only. Keep the summary factual, neutral, and as close as possible to but strictly under 3000 characters.',
+        'You are an expert journalist who writes thorough but concise news summaries in poems. Respond with plain text only. Keep the summary factual, neutral, and as close as possible to but strictly under 3000 characters.',
     },
     {
       role: 'user',
-      content: `Summarise the following article so the result is under 3000 characters. Aim for around 2800 characters when information allows. Mention the most important facts, timelines, and stakeholders without speculation.\n\nHeadline: ${headline || 'Unknown headline'}\nSource: ${source || 'Unknown source'}\n\nArticle Content:\n${truncatedArticle}`,
+      content: `Summarise the following article so the result is under 3000 characters. Aim for around 2800 characters when information allows. Mention the most important facts, timelines, and stakeholders. Format it as a poem, but prefer to convey all information clearly.\n\nHeadline: ${headline || 'Unknown headline'}\nSource: ${source || 'Unknown source'}\n\nArticle Content:\n${truncatedArticle}`,
     },
   ];
 
-  const response = await fetch(OPEN_ROUTER_API_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: OPEN_ROUTER_MODEL,
-      messages,
-      temperature: 0.4,
-    }),
-  });
-
-  const raw = await response.text();
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`OpenRouter returned non-JSON response: ${error.message || 'parse error'}`);
+  const errors = [];
+  let response = "";
+  for (const model of LYRIC_MODELS) {
+    console.log("trying model:", model);
+    try {
+      response = await callOpenRouterWithRetries({ model, messages, attempts: 3 });
+      console.log("lyrics:", response, "test:", /\w/.test(response));
+      break;
+    } catch (e) {
+      console.log(model, e);
+      errors.push(`[${model}] ${e.message}`);
+      continue;
+    }
   }
 
-  if (!response.ok) {
-    const details = payload?.error?.message || payload?.error || raw;
-    throw new Error(typeof details === 'string' ? details : 'OpenRouter summarisation failed');
+  if (!response) {
+    throw new Error('no response from openrouter');
   }
 
-  const content = payload?.choices?.[0]?.message?.content;
-  if (!content || typeof content !== 'string') {
-    throw new Error('OpenRouter did not return a summary.');
-  }
-
-  return enforcePromptLimit(content, SUNO_PROMPT_MAX_CHARS);
+  return enforcePromptLimit(response, SUNO_PROMPT_MAX_CHARS);
 }
 
 async function generateLyricsWithOpenRouter(stories) {
