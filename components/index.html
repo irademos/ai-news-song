@@ -597,15 +597,31 @@
 
         const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs: 180000, intervalMs: 15000 });
 
-        if (latestSummary) {
-          clip.lyrics = latestSummary;
-        }
+        const createdAt = clip.created_at ? new Date(clip.created_at) : new Date();
+        const summaryText = (latestSummary || body.prompt || '').trim();
+        const songRecord = {
+          id: clip.id || null,
+          audioUrl: clip.audio_url || '',
+          title: clip.title || 'Daily Spin (Suno)',
+          artist: clip.artist || 'Suno AI',
+          sunoTitle: clip.title || 'Daily Spin (Suno)',
+          sunoArtist: clip.artist || 'Suno AI',
+          lyrics: (summaryText || clip.lyrics || '').trim(),
+          prompt: summaryText,
+          createdAt,
+          generatedAtIso: createdAt.toISOString(),
+          articleHeadline: story.headline || '',
+          articleSummary: story.summary || '',
+          articleSource: story.source || '',
+          articleUrl: story.link || '',
+          articleContent: latestArticleContent || '',
+        };
 
-        populateFromSuno(clip);
+        populateFromSuno(songRecord);
 
         let saved = false;
         try {
-          await saveGeneratedSong(clip, latestSummary || body.prompt);
+          await saveGeneratedSong(songRecord);
           saved = true;
         } catch (persistError) {
           console.error('Failed to save song to Firebase:', persistError);
@@ -686,10 +702,13 @@
         const title = clone.querySelector('.song-title');
         const meta = clone.querySelector('.song-meta');
 
-        title.textContent = song.title;
+        const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
+        title.textContent = displayTitle;
         const metaPieces = [];
-        if (song.artist) metaPieces.push(song.artist);
-        metaPieces.push(formatDateTime(song.createdAt));
+        if (song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
+        if (song.articleSource) metaPieces.push(song.articleSource);
+        const createdAt = formatDateTime(song.createdAt);
+        if (createdAt) metaPieces.push(createdAt);
         meta.textContent = metaPieces.filter(Boolean).join(' • ');
 
         button.dataset.id = song.id || '';
@@ -717,17 +736,31 @@
       const source = document.getElementById('audioSource');
       const tag = document.getElementById('songTag');
 
-      title.textContent = song.title || 'Daily Spin (Suno)';
+      const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
+      title.textContent = displayTitle;
       const metaPieces = [];
-      metaPieces.push(song.artist || 'Suno AI');
+      if (song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
+      if (song.articleSource) metaPieces.push(song.articleSource);
       const formatted = formatDateTime(song.createdAt);
       if (formatted) metaPieces.push(formatted);
-      meta.textContent = metaPieces.join(' — ');
+      meta.textContent = metaPieces.join(' — ') || 'Generated';
 
-      description.textContent = song.lyrics || 'Your Suno track is ready. Enjoy!';
-      source.src = song.audioUrl || '';
+      const detailSections = [];
+      if (song.articleHeadline) {
+        detailSections.push(`Headline: ${song.articleHeadline}`);
+      }
+      if (song.articleContent) {
+        detailSections.push(`Article:\n${song.articleContent}`);
+      } else if (song.articleSummary) {
+        detailSections.push(`Summary:\n${song.articleSummary}`);
+      }
+      if (song.lyrics) {
+        detailSections.push(`Lyrics:\n${song.lyrics}`);
+      }
+      description.textContent = detailSections.join('\n\n') || 'Details are unavailable for this spin.';
+      source.src = song.audioUrl || song.streamUrl || '';
       audio.load();
-      if (song.audioUrl) {
+      if (source.src) {
         audio.play().catch(() => {});
       }
 
@@ -772,11 +805,19 @@
 
               return {
                 id: doc.id,
-                title: data.title || 'Daily Spin (Suno)',
-                artist: data.artist || 'Suno AI',
-                lyrics: data.lyrics || '',
+                title: data.title || data.sunoTitle || 'Daily Spin (Suno)',
+                sunoTitle: data.sunoTitle || data.title || 'Daily Spin (Suno)',
+                artist: data.artist || data.sunoArtist || 'Suno AI',
+                sunoArtist: data.sunoArtist || data.artist || 'Suno AI',
+                lyrics: data.lyrics || data.prompt || '',
                 audioUrl: data.audioUrl || data.streamUrl || '',
                 createdAt,
+                prompt: data.prompt || '',
+                articleHeadline: data.articleHeadline || '',
+                articleSummary: data.articleSummary || data.prompt || '',
+                articleSource: data.articleSource || '',
+                articleUrl: data.articleUrl || '',
+                articleContent: data.articleContent || '',
               };
             })
             .filter((song) => Boolean(song.audioUrl));
@@ -841,7 +882,7 @@
       }
     }
 
-    function populateFromSuno(clip) {
+    function populateFromSuno(song) {
       const audio = document.getElementById('audioPlayer');
       const source = document.getElementById('audioSource');
       const title = document.getElementById('songTitle');
@@ -849,14 +890,32 @@
       const desc = document.getElementById('songDescription');
       const tag = document.getElementById('songTag');
 
-      const createdAt = clip.created_at ? new Date(clip.created_at) : new Date();
+      const createdAt = song.createdAt instanceof Date ? song.createdAt : new Date();
+      const metaPieces = [];
+      if (song.sunoTitle) metaPieces.push(`Suno: ${song.sunoTitle}`);
+      if (song.articleSource) metaPieces.push(song.articleSource);
+      const formatted = formatDateTime(createdAt);
+      if (formatted) metaPieces.push(formatted);
 
-      title.textContent = clip.title || 'Daily Spin (Suno)';
-      meta.textContent = `Suno AI — ${formatDateTime(createdAt)}`;
-      desc.textContent = clip.lyrics || 'Your Suno track is ready. Enjoy!';
-      source.src = clip.audio_url || '';
+      title.textContent = song.articleHeadline || song.sunoTitle || 'Daily Spin (Suno)';
+      meta.textContent = metaPieces.join(' — ') || 'Generated';
+
+      const detailSections = [];
+      if (song.articleHeadline) {
+        detailSections.push(`Headline: ${song.articleHeadline}`);
+      }
+      if (song.articleContent) {
+        detailSections.push(`Article:\n${song.articleContent}`);
+      } else if (song.articleSummary) {
+        detailSections.push(`Summary:\n${song.articleSummary}`);
+      }
+      if (song.lyrics) {
+        detailSections.push(`Lyrics:\n${song.lyrics}`);
+      }
+      desc.textContent = detailSections.join('\n\n') || 'Your Suno track is ready. Enjoy!';
+      source.src = song.audioUrl || song.streamUrl || '';
       audio.load();
-      if (clip.audio_url) {
+      if (source.src) {
         audio.play().catch(() => {});
       }
 
@@ -895,25 +954,32 @@
       throw new Error('Timed out waiting for Suno audio.');
     }
 
-    async function saveGeneratedSong(clip, prompt) {
+    async function saveGeneratedSong(song) {
       await initFirebase();
       if (!db) throw new Error('Firebase is not available.');
 
-      if (!clip || !clip.audio_url) {
+      if (!song || !song.audioUrl) {
         throw new Error('Suno did not return an audio URL to save.');
       }
 
       const songsRef = collection(db, 'spins');
-      const nowIso = new Date().toISOString();
+      const generatedIso = song.generatedAtIso || (song.createdAt instanceof Date
+        ? song.createdAt.toISOString()
+        : new Date().toISOString());
 
       await addDoc(songsRef, {
-        title: clip.title || 'Daily Spin (Suno)',
-        artist: clip.artist || 'Suno AI',
-        lyrics: (clip.lyrics || '').trim(),
-        audioUrl: clip.audio_url,
-        prompt: prompt || '',
+        sunoTitle: song.sunoTitle || song.title || 'Daily Spin (Suno)',
+        sunoArtist: song.sunoArtist || song.artist || 'Suno AI',
+        lyrics: (song.lyrics || '').trim(),
+        audioUrl: song.audioUrl,
+        prompt: song.prompt || '',
+        articleHeadline: song.articleHeadline || '',
+        articleSummary: song.articleSummary || '',
+        articleSource: song.articleSource || '',
+        articleUrl: song.articleUrl || '',
+        articleContent: song.articleContent || '',
         createdAt: serverTimestamp(),
-        generatedAtIso: nowIso,
+        generatedAtIso: generatedIso,
       });
     }
 
