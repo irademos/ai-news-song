@@ -1,8 +1,15 @@
 const DEFAULT_HEADERS = {
-  'User-Agent': 'Daily-Spin/1.0 (+https://example.com)',
-  Accept:
-    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-};
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+        'Accept':
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+        // Avoid compression edge-cases in some hosts
+        'Accept-Encoding': 'gzip, deflate, br',
+      };
 
 function normaliseWhitespace(value) {
   return value.replace(/\s+/g, ' ').trim();
@@ -84,16 +91,20 @@ function mergeParagraphs(paragraphs) {
 }
 
 async function fetchArticleContent(url) {
+  console.log("url:", url);
   if (!url || typeof url !== 'string') {
     throw new Error('A valid article URL must be provided.');
   }
 
   const response = await fetch(url, { headers: DEFAULT_HEADERS });
+  console.log("res:", response);
   if (!response.ok) {
+    
     throw new Error(`Failed to retrieve article (status ${response.status})`);
   }
 
   const html = await response.text();
+  console.log("html:", html);
   const blocks = extractCandidateBlocks(html);
 
   for (const block of blocks) {

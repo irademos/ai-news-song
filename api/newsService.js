@@ -2,16 +2,16 @@ const https = require('https');
 
 const NEWS_SOURCES = [
   {
-    url: 'https://feeds.bbci.co.uk/news/rss.xml',
-    source: 'BBC News',
-  },
-  {
     url: 'https://feeds.npr.org/1001/rss.xml',
     source: 'NPR',
   },
+  {
+    url: 'https://feeds.bbci.co.uk/news/rss.xml',
+    source: 'BBC News',
+  },
 ];
 
-const DEFAULT_LIMIT = 5;
+const DEFAULT_LIMIT = 50;
 
 function decodeEntities(text) {
   return text

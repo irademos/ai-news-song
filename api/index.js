@@ -36,7 +36,6 @@ async function callOpenRouterOnce({ model, messages, timeoutMs = 20000 }) {
         model,
         messages,
         temperature: 0.85,
-        max_tokens: 400,
       }),
       signal: ctrl.signal,
     });
@@ -136,7 +135,7 @@ app.get('/api/firebase-config', (_req, res) => {
 });
 
 app.get('/api/news-headlines', async (req, res) => {
-  const limit = Math.max(1, Math.min(20, Number.parseInt(req.query.limit, 10) || 8));
+  const limit = 50;//Math.max(1, Math.min(20, Number.parseInt(req.query.limit, 10) || 8));
 
   try {
     const stories = await fetchTopNews(limit);
@@ -187,9 +186,11 @@ app.post('/api/article-content', async (req, res) => {
 function enforcePromptLimit(text, max = SUNO_PROMPT_MAX_CHARS) {
   if (typeof text !== 'string') return '';
   const normalised = text.replace(/\s+$/g, '').trim();
+  console.log("promptLimit:", normalised.length, normalised);
   if (normalised.length <= max) {
     return normalised;
   }
+  console.log("sliced:", `${normalised.slice(0, max - 1).trimEnd()}…`);
   return `${normalised.slice(0, max - 1).trimEnd()}…`;
 }
 
@@ -219,21 +220,33 @@ async function summarizeArticleWithOpenRouter({ headline, source, articleText })
   }
 
   const truncatedArticle = articleText.length > 20000 ? `${articleText.slice(0, 20000)}…` : articleText;
+  const system = [
+    'You are a songwriter who transforms news articles into factual, clear, and comprehensive songs.',
+    'Your goal is to accurately convey the main points, background, context, and implications of the article as directly and clearly as possible.',
+    'Prioritize clarity and completeness over artistic style.',
+    'The song should explain events, causes, people involved, timelines, and consequences in a way that someone unfamiliar with the topic could fully understand.',
+    'Use plain, direct language—avoid rhyme, metaphor, symbolism, or exaggeration unless absolutely necessary for readability.',
+    'Maintain a neutral, explanatory, and informative tone, similar to a well-written summary that happens to have rhythm and phrasing like a song.',
+    'Organize the lyrics logically (intro, body, conclusion), showing cause and effect where relevant.',
+    'Prefer factual density—include as many specific details from the article as possible while keeping natural flow.',
+    'The final output should be close to 3000 characters, but must not exceed that limit.',
+    'Do not invent or infer facts not clearly stated in the article. Respond with plain text only.',
+  ].join(' ');
+
+  const user = [
+    'Write a factual, explanatory song based on the following news article.',
+    'Keep it clear, informative, and comprehensive, following the above rules.',
+    `\n\nHeadline: ${headline || 'Unknown headline'}\nSource: ${source || 'Unknown source'}\n\nArticle Content:\n${truncatedArticle}`,
+  ].join(' ');
 
   const messages = [
-    {
-      role: 'system',
-      content:
-        'You are an expert journalist who writes thorough but concise news summaries in poems. Respond with plain text only. Keep the summary factual, neutral, and as close as possible to but strictly under 3000 characters.',
-    },
-    {
-      role: 'user',
-      content: `Summarise the following article so the result is under 3000 characters. Aim for around 2800 characters when information allows. Mention the most important facts, timelines, and stakeholders. Format it as a poem, but prefer to convey all information clearly.\n\nHeadline: ${headline || 'Unknown headline'}\nSource: ${source || 'Unknown source'}\n\nArticle Content:\n${truncatedArticle}`,
-    },
+    { role: 'system', content: system },
+    { role: 'user', content: user },
   ];
 
   const errors = [];
   let response = "";
+  console.log(messages);
   for (const model of LYRIC_MODELS) {
     console.log("trying model:", model);
     try {
