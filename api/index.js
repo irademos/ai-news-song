@@ -163,6 +163,27 @@ app.get('/api/news-headlines', async (req, res) => {
   }
 });
 
+app.post('/api/article-content', async (req, res) => {
+  const { url } = req.body || {};
+
+  if (!url) {
+    return res.status(400).json({ error: 'Article URL is required.' });
+  }
+
+  try {
+    const content = await fetchArticleContent(url);
+    if (!content) {
+      return res.status(404).json({ error: 'The article did not contain readable content.' });
+    }
+
+    res.json({ content });
+  } catch (error) {
+    res
+      .status(502)
+      .json({ error: 'Unable to load article content for the selected headline.', details: error.message });
+  }
+});
+
 function enforcePromptLimit(text, max = SUNO_PROMPT_MAX_CHARS) {
   if (typeof text !== 'string') return '';
   const normalised = text.replace(/\s+$/g, '').trim();
