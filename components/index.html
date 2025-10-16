@@ -327,6 +327,7 @@
       limit,
       onSnapshot,
       addDoc,
+      updateDoc,
       serverTimestamp,
     } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
@@ -355,7 +356,7 @@
       ['audiopipe.suno.ai', 'cdn1.suno.ai'],
     ]);
 
-    function normalizeSunoAudioUrl(value) {
+    function normalizeSunoAudioUrl(value, { migrateHost = false } = {}) {
       if (typeof value !== 'string') return '';
 
       const trimmed = value.trim();
@@ -366,11 +367,12 @@
       try {
         const parsed = new URL(trimmed);
         const lowerHost = parsed.hostname.toLowerCase();
-        const migratedHost = SUNO_AUDIO_HOST_MIGRATIONS.get(lowerHost);
 
-        if (migratedHost) {
-          parsed.hostname = migratedHost;
-          return parsed.toString();
+        if (migrateHost) {
+          const migratedHost = SUNO_AUDIO_HOST_MIGRATIONS.get(lowerHost);
+          if (migratedHost) {
+            parsed.hostname = migratedHost;
+          }
         }
 
         return parsed.toString();
@@ -379,8 +381,25 @@
       }
     }
 
-    function sanitizeAudioUrl(value) {
-      return normalizeSunoAudioUrl(value);
+    function sanitizeAudioUrl(value, options) {
+      return normalizeSunoAudioUrl(value, options);
+    }
+
+    function isMigratingAudioHost(url) {
+      if (!url) return false;
+      try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.toLowerCase();
+        return SUNO_AUDIO_HOST_MIGRATIONS.has(host);
+      } catch {
+        return false;
+      }
+    }
+
+    function isFinalSunoState(state) {
+      if (typeof state !== 'string') return false;
+      const normalized = state.trim().toLowerCase();
+      return normalized === 'complete' || normalized === 'completed' || normalized === 'succeeded';
     }
 
     function needsAudioProxy(url) {
@@ -660,11 +679,12 @@
         const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs: 180000, intervalMs: 15000 });
 
         const createdAt = clip.created_at ? new Date(clip.created_at) : new Date();
-        const audioUrl = typeof clip.audio_url === 'string' ? normalizeSunoAudioUrl(clip.audio_url) : '';
+        const streamUrl = typeof clip.audio_url === 'string' ? sanitizeAudioUrl(clip.audio_url) : '';
         const summaryText = (latestSummary || body.prompt || '').trim();
         const songRecord = {
           id: clip.id || null,
-          audioUrl,
+          audioUrl: streamUrl,
+          streamUrl,
           title: clip.title || 'Daily Spin (Suno)',
           artist: clip.artist || 'Suno AI',
           sunoTitle: clip.title || 'Daily Spin (Suno)',
@@ -683,11 +703,24 @@
         populateFromSuno(songRecord);
 
         let saved = false;
+        let docRef = null;
         try {
-          await saveGeneratedSong(songRecord);
+          docRef = await saveGeneratedSong(songRecord);
           saved = true;
         } catch (persistError) {
           console.error('Failed to save song to Firebase:', persistError);
+        }
+
+        if (docRef) {
+          finalizeSongAudio({
+            docRef,
+            taskIds,
+            clipIds,
+            streamUrl,
+            songRecord,
+          }).catch((error) => {
+            console.warn('Unable to finalise Suno audio URL right now:', error);
+          });
         }
 
         updateStatus(
@@ -822,9 +855,14 @@
       }
       description.textContent = detailSections.join('\n\n') || 'Details are unavailable for this spin.';
       const playableSrc = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
-      source.src = playableSrc;
-      audio.load();
-      if (playableSrc) {
+      const currentSrc = source.getAttribute('src') || '';
+      if (playableSrc !== currentSrc) {
+        source.src = playableSrc;
+        audio.load();
+        if (playableSrc) {
+          audio.play().catch(() => {});
+        }
+      } else if (playableSrc) {
         audio.play().catch(() => {});
       }
 
@@ -878,6 +916,7 @@
                 sunoArtist: data.sunoArtist || data.artist || 'Suno AI',
                 lyrics: data.lyrics || data.prompt || '',
                 audioUrl: rawAudioUrl || rawStreamUrl,
+                streamUrl: rawStreamUrl,
                 createdAt,
                 prompt: data.prompt || '',
                 articleHeadline: data.articleHeadline || '',
@@ -994,7 +1033,10 @@
       currentSongId = null;
     }
 
-    async function pollForAudioIds({ taskIds = [], clipIds = [] }, { timeoutMs = 180000, intervalMs = 5000 } = {}) {
+    async function pollForAudioIds(
+      { taskIds = [], clipIds = [] },
+      { timeoutMs = 180000, intervalMs = 5000, requireFinalAudioHost = false } = {},
+    ) {
       const start = Date.now();
       while (Date.now() - start < timeoutMs) {
         const params = clipIds.length
@@ -1011,9 +1053,20 @@
 
           const { data = [] } = await r.json();
           const ready = data.find((d) => d && d.audio_url);
-          if (ready) return ready;
+          if (ready) {
+            if (requireFinalAudioHost) {
+              const hasFinalState = isFinalSunoState(ready.state);
+              const hostNeedsMigration = isMigratingAudioHost(ready.audio_url);
+              if (!hasFinalState || hostNeedsMigration) {
+                await new Promise((res) => setTimeout(res, intervalMs));
+                continue;
+              }
+            }
 
-          
+            return ready;
+          }
+
+
         } catch (e) {
           await new Promise((res) => setTimeout(res, intervalMs));
           continue;
@@ -1026,9 +1079,15 @@
       await initFirebase();
       if (!db) throw new Error('Firebase is not available.');
 
-      const sanitizedUrl = sanitizeAudioUrl(song?.audioUrl || song?.streamUrl || '');
+      if (!song) {
+        throw new Error('Suno did not return an audio URL to save.');
+      }
 
-      if (!song || !sanitizedUrl) {
+      const sanitizedStreamUrl = sanitizeAudioUrl(song?.streamUrl || '');
+      const sanitizedFinalUrl = sanitizeAudioUrl(song?.audioUrl || '');
+      const persistedAudioUrl = sanitizedFinalUrl || sanitizedStreamUrl;
+
+      if (!persistedAudioUrl) {
         throw new Error('Suno did not return an audio URL to save.');
       }
 
@@ -1037,11 +1096,12 @@
         ? song.createdAt.toISOString()
         : new Date().toISOString());
 
-      await addDoc(songsRef, {
+      const payload = {
         sunoTitle: song.sunoTitle || song.title || 'Daily Spin (Suno)',
         sunoArtist: song.sunoArtist || song.artist || 'Suno AI',
         lyrics: (song.lyrics || '').trim(),
-        audioUrl: sanitizedUrl,
+        audioUrl: persistedAudioUrl,
+        streamUrl: sanitizedStreamUrl,
         prompt: song.prompt || '',
         articleHeadline: song.articleHeadline || '',
         articleSummary: song.articleSummary || '',
@@ -1050,7 +1110,57 @@
         articleContent: song.articleContent || '',
         createdAt: serverTimestamp(),
         generatedAtIso: generatedIso,
-      });
+      };
+
+      return addDoc(songsRef, payload);
+    }
+
+    async function finalizeSongAudio({ docRef, taskIds = [], clipIds = [], streamUrl, songRecord }) {
+      if (!docRef) return;
+
+      const hasTaskIds = Array.isArray(taskIds) && taskIds.length > 0;
+      const hasClipIds = Array.isArray(clipIds) && clipIds.length > 0;
+      if (!hasTaskIds && !hasClipIds) {
+        return;
+      }
+
+      try {
+        const finalClip = await pollForAudioIds(
+          { taskIds, clipIds },
+          { timeoutMs: 240000, intervalMs: 10000, requireFinalAudioHost: true },
+        );
+
+        const finalUrl = sanitizeAudioUrl(finalClip?.audio_url || '');
+        if (!finalUrl || finalUrl === streamUrl) {
+          return;
+        }
+
+        await updateDoc(docRef, { audioUrl: finalUrl });
+
+        if (songRecord) {
+          songRecord.audioUrl = finalUrl;
+        }
+      } catch (error) {
+        const fallbackClip = await pollForAudioIds(
+          { taskIds, clipIds },
+          { timeoutMs: 60000, intervalMs: 10000 },
+        ).catch(() => null);
+
+        if (!fallbackClip || !isFinalSunoState(fallbackClip.state)) {
+          throw error;
+        }
+
+        const migratedUrl = sanitizeAudioUrl(fallbackClip.audio_url || '', { migrateHost: true });
+        if (!migratedUrl || migratedUrl === streamUrl) {
+          throw error;
+        }
+
+        await updateDoc(docRef, { audioUrl: migratedUrl });
+
+        if (songRecord) {
+          songRecord.audioUrl = migratedUrl;
+        }
+      }
     }
 
     document.addEventListener('DOMContentLoaded', async () => {

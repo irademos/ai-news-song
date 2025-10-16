@@ -29,7 +29,7 @@ const SUNO_AUDIO_HOST_MIGRATIONS = new Map([
   ['audiopipe.suno.ai', 'cdn1.suno.ai'],
 ]);
 
-function normalizeSunoAudioUrl(value) {
+function normalizeSunoAudioUrl(value, { migrateHost = false } = {}) {
   if (typeof value !== 'string') return '';
 
   const trimmed = value.trim();
@@ -40,11 +40,12 @@ function normalizeSunoAudioUrl(value) {
   try {
     const parsed = new URL(trimmed);
     const lowerHost = parsed.hostname.toLowerCase();
-    const migratedHost = SUNO_AUDIO_HOST_MIGRATIONS.get(lowerHost);
 
-    if (migratedHost) {
-      parsed.hostname = migratedHost;
-      return parsed.toString();
+    if (migrateHost) {
+      const migratedHost = SUNO_AUDIO_HOST_MIGRATIONS.get(lowerHost);
+      if (migratedHost) {
+        parsed.hostname = migratedHost;
+      }
     }
 
     return parsed.toString();
