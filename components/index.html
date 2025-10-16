@@ -207,32 +207,6 @@
       gap: 0.6rem;
     }
 
-    .generate-song button {
-      appearance: none;
-      border: none;
-      border-radius: 14px;
-      padding: 0.85rem 1.2rem;
-      background: linear-gradient(135deg, rgba(245, 158, 11, 0.92), rgba(234, 179, 8, 0.85));
-      color: #0f172a;
-      font-weight: 600;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.2s ease;
-      box-shadow: 0 12px 32px rgba(245, 158, 11, 0.28);
-    }
-
-    .generate-song button:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 16px 36px rgba(245, 158, 11, 0.34);
-    }
-
-    .generate-song button:disabled {
-      cursor: not-allowed;
-      opacity: 0.7;
-      transform: none;
-      box-shadow: none;
-    }
-
     .generate-song-status {
       font-size: 0.9rem;
       color: var(--muted);
@@ -244,17 +218,17 @@
   <div class="app-shell">
     <aside class="sidebar">
       <header>
-        <h2>Recent Spins</h2>
-        <p>Catch up on the tracks we've highlighted this week.</p>
+        <h2>Top Headlines</h2>
+        <p>Select a headline to fetch the story and spin a fresh track.</p>
       </header>
       <ul class="song-list" id="songList"></ul>
     </aside>
 
     <main class="player-panel">
       <div class="player-header">
-        <span class="tag" id="songTag">Now Playing</span>
-        <h1 id="songTitle">Loading...</h1>
-        <p id="songMeta">Please select a song from the list.</p>
+        <span class="tag" id="songTag">Top Stories</span>
+        <h1 id="songTitle">Choose a headline</h1>
+        <p id="songMeta">Select a headline from the list to load the article.</p>
       </div>
 
       <audio id="audioPlayer" controls preload="none">
@@ -263,11 +237,10 @@
       </audio>
 
       <section class="lyrics" id="songDescription">
-        Choose a song to read a short story about why it made the Daily Spin playlist.
+        Article summaries will appear here after you pick a headline.
       </section>
 
       <section class="generate-song">
-        <button type="button" id="generateSongButton">Generate Suno Song</button>
         <p class="generate-song-status" id="generateSongStatus" aria-live="polite"></p>
       </section>
     </main>
@@ -300,6 +273,10 @@
     let currentSongId = null;
     let unsubscribeSongs = null;
     let firebaseInitPromise = null;
+    let headlinesCache = [];
+    let currentHeadlineKey = null;
+    let isGenerating = false;
+    let latestSummary = '';
 
     async function initFirebase() {
       if (firebaseInitPromise) return firebaseInitPromise;
@@ -327,20 +304,183 @@
       const source = document.getElementById('audioSource');
       const tag = document.getElementById('songTag');
 
-      title.textContent = 'Waiting for a spin';
-      meta.textContent = 'Generate a Suno song to start your listening session.';
-      description.textContent = 'Lyrics will appear here after you generate a track.';
+      title.textContent = 'Choose a headline';
+      meta.textContent = 'Select a news headline to fetch the story, get a summary, and spin a Suno track.';
+      description.textContent = 'Article summaries will appear here after you pick a headline.';
       source.src = '';
       audio.load();
-      tag.textContent = 'Now Playing';
-      tag.style.background = 'rgba(245, 158, 11, 0.18)';
-      tag.style.color = 'var(--accent)';
+      tag.textContent = 'Top Stories';
+      tag.style.background = 'rgba(96, 165, 250, 0.18)';
+      tag.style.color = '#60a5fa';
     }
 
-    function showEmptyState(message = 'No songs are available right now. Generate one to get started!') {
+    function showEmptyState(message = 'No headlines are available right now. Please check back soon.') {
       const list = document.getElementById('songList');
       if (!list) return;
       list.innerHTML = `<li class="empty-state">${message}</li>`;
+    }
+
+    function updateStatus(message) {
+      const status = document.getElementById('generateSongStatus');
+      if (!status) return;
+      status.textContent = message || '';
+    }
+
+    function renderHeadlineList(stories) {
+      headlinesCache = stories;
+      const list = document.getElementById('songList');
+      const template = document.getElementById('songItemTemplate');
+      if (!list || !template) return;
+
+      if (!stories.length) {
+        showEmptyState('No fresh headlines were found. Try again later.');
+        return;
+      }
+
+      list.innerHTML = '';
+
+      stories.forEach((story) => {
+        const clone = template.content.cloneNode(true);
+        const button = clone.querySelector('button');
+        const title = clone.querySelector('.song-title');
+        const meta = clone.querySelector('.song-meta');
+
+        const key = story.link || `${story.source || 'source'}:${story.headline}`;
+        const preview = (story.summary || '').trim();
+        const truncatedPreview = preview.length > 140 ? `${preview.slice(0, 140).trimEnd()}…` : preview;
+
+        title.textContent = story.headline || 'Untitled story';
+        meta.textContent = [story.source, truncatedPreview].filter(Boolean).join(' • ');
+
+        button.dataset.id = key;
+        button.classList.toggle('active', key === currentHeadlineKey);
+        button.addEventListener('click', () => {
+          handleHeadlineSelection({ ...story, key });
+        });
+
+        list.appendChild(clone);
+      });
+    }
+
+    function handleHeadlineSelection(story) {
+      if (!story || !story.key) {
+        updateStatus('This headline is missing critical information.');
+        return;
+      }
+
+      if (isGenerating && story.key !== currentHeadlineKey) {
+        updateStatus('Please wait until the current track finishes generating.');
+        return;
+      }
+
+      currentHeadlineKey = story.key;
+      renderHeadlineList(headlinesCache);
+
+      const title = document.getElementById('songTitle');
+      const meta = document.getElementById('songMeta');
+      const description = document.getElementById('songDescription');
+      const tag = document.getElementById('songTag');
+
+      if (title) title.textContent = story.headline || 'Selected headline';
+      if (meta) meta.textContent = story.source || 'Breaking news';
+      if (description) description.textContent =
+        story.summary || 'Fetching the full article and preparing a summary…';
+      if (tag) {
+        tag.textContent = 'Generating';
+        tag.style.background = 'rgba(245, 158, 11, 0.18)';
+        tag.style.color = 'var(--accent)';
+      }
+
+      updateStatus('Fetching the full article and summarising with OpenRouter…');
+      generateSongForHeadline(story);
+    }
+
+    async function generateSongForHeadline(story) {
+      if (!story?.link) {
+        updateStatus('The selected headline does not have a readable article link.');
+        return;
+      }
+
+      if (isGenerating) {
+        return;
+      }
+
+      isGenerating = true;
+      latestSummary = '';
+
+      const audio = document.getElementById('audioPlayer');
+      const source = document.getElementById('audioSource');
+      if (audio && source) {
+        source.src = '';
+        audio.load();
+      }
+
+      try {
+        const response = await fetch('/api/generate-song', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: story.link,
+            headline: story.headline,
+            source: story.source,
+          }),
+        });
+
+        const body = await response.json().catch(() => ({}));
+
+        if (response.status !== 202) {
+          const message = body?.error || 'Failed to create a Suno generation task.';
+          throw new Error(message);
+        }
+
+        const summary = body.summary || body.prompt || story.summary || '';
+        latestSummary = summary;
+
+        const description = document.getElementById('songDescription');
+        if (description) {
+          description.textContent = summary || 'Waiting for OpenRouter to provide a summary…';
+        }
+
+        const taskIds = Array.isArray(body.task_ids) ? body.task_ids : [];
+        const clipIds = Array.isArray(body.clip_ids) ? body.clip_ids : [];
+
+        if (!taskIds.length && !clipIds.length) {
+          throw new Error('Suno did not return any task or clip identifiers.');
+        }
+
+        updateStatus('Song requested. Waiting for Suno to render…');
+
+        const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs: 180000, intervalMs: 15000 });
+
+        if (latestSummary) {
+          clip.lyrics = latestSummary;
+        }
+
+        populateFromSuno(clip);
+
+        let saved = false;
+        try {
+          await saveGeneratedSong(clip, latestSummary || body.prompt);
+          saved = true;
+        } catch (persistError) {
+          console.error('Failed to save song to Firebase:', persistError);
+        }
+
+        updateStatus(
+          saved
+            ? 'Your Suno song is ready and saved to Recent Spins.'
+            : 'Your Suno song is ready, but it could not be saved to Recent Spins.',
+        );
+      } catch (error) {
+        console.error('Failed to generate song from headline:', error);
+        updateStatus(error.message || 'Something went wrong while generating the song.');
+        latestSummary = '';
+        resetNowPlaying();
+        currentHeadlineKey = null;
+        renderHeadlineList(headlinesCache);
+      } finally {
+        isGenerating = false;
+      }
     }
 
     function formatDate(date) {
@@ -511,13 +651,36 @@
       );
     }
 
-    async function loadSongs() {
+    async function loadHeadlines() {
+      const list = document.getElementById('songList');
+      if (list) {
+        list.innerHTML = '<li class="empty-state">Loading headlines…</li>';
+      }
+
       try {
-        await initFirebase();
-        subscribeToSongs();
+        const response = await fetch('/api/news-headlines');
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          const message = payload?.error || 'Unable to fetch the latest headlines.';
+          throw new Error(message);
+        }
+
+        const stories = Array.isArray(payload?.stories) ? payload.stories : [];
+
+        if (!stories.length) {
+          showEmptyState('No headlines are available right now. Please check back soon.');
+          updateStatus('Headlines are unavailable right now.');
+          return;
+        }
+
+        renderHeadlineList(stories);
+        updateStatus('Select a headline to generate a Suno track.');
       } catch (error) {
-        console.error('Unable to initialise Firebase:', error);
-        showEmptyState('We had trouble loading the recent spins. Please try again soon.');
+        console.error('Unable to load headlines:', error);
+        showEmptyState('We could not load the latest headlines. Please try again later.');
+        updateStatus(error.message || 'Unable to load headlines right now.');
+        resetNowPlaying();
       }
     }
 
@@ -597,62 +760,9 @@
       });
     }
 
-    async function generateSongFromNews() {
-      const button = document.getElementById('generateSongButton');
-      const status = document.getElementById('generateSongStatus');
-      if (!button || !status) return;
-
-      button.disabled = true;
-      status.textContent = 'Crafting a Suno prompt from today\'s headlines...';
-
-      try {
-        const response = await fetch('/api/generate-song', { method: 'POST' });
-
-        if (response.status !== 202) {
-          const e = await response.json().catch(() => ({}));
-          throw new Error(e.error || 'Failed to create Suno task');
-        }
-
-        const body = await response.json();
-        const taskIds = body.task_ids || [];
-        const clipIds = body.clip_ids || [];
-
-        if (!taskIds.length && !clipIds.length) {
-          console.warn('Create response body:', body); // leaves a breadcrumb
-          throw new Error('Suno did not return any task or clip IDs');
-        }
-
-        // status.textContent = 'Song requested. Waiting for Suno to render…';
-        status.textContent = 'Song requested. Fetching audio…';
-
-        const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs: 180000, intervalMs: 15000 });
-        populateFromSuno(clip);
-
-        let saved = false;
-        try {
-          await saveGeneratedSong(clip, body.prompt);
-          saved = true;
-        } catch (persistError) {
-          console.error('Failed to save song to Firebase:', persistError);
-        }
-
-        status.textContent = saved
-          ? 'Your Suno song is ready and saved to Recent Spins.'
-          : 'Your Suno song is ready, but it could not be saved to Recent Spins.';
-      } catch (error) {
-        console.error('Failed to generate Suno song:', error);
-        status.textContent = error.message || 'Something went wrong while generating the song.';
-      } finally {
-        button.disabled = false;
-      }
-    }
-
     document.addEventListener('DOMContentLoaded', () => {
-      loadSongs();
-      const button = document.getElementById('generateSongButton');
-      if (button) {
-        button.addEventListener('click', generateSongFromNews);
-      }
+      resetNowPlaying();
+      loadHeadlines();
     });
   </script>
 </body>
