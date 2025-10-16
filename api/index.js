@@ -25,6 +25,34 @@ const ALLOWED_AUDIO_HOSTS = new Set([
   'cdn3.suno.ai',
 ]);
 
+const SUNO_AUDIO_HOST_MIGRATIONS = new Map([
+  ['audiopipe.suno.ai', 'cdn1.suno.ai'],
+]);
+
+function normalizeSunoAudioUrl(value) {
+  if (typeof value !== 'string') return '';
+
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+
+  if (trimmed.startsWith('/')) return trimmed;
+
+  try {
+    const parsed = new URL(trimmed);
+    const lowerHost = parsed.hostname.toLowerCase();
+    const migratedHost = SUNO_AUDIO_HOST_MIGRATIONS.get(lowerHost);
+
+    if (migratedHost) {
+      parsed.hostname = migratedHost;
+      return parsed.toString();
+    }
+
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
 function isAllowedAudioHost(hostname) {
   if (!hostname) return false;
   const lower = hostname.toLowerCase();
@@ -344,7 +372,12 @@ async function pollForAudio(clipIds, { timeoutMs = 120000, intervalMs = 2500 } =
     const { data = [] } = await r.json();
 
     const ready = data.find(d => d.state === 'succeeded' && d.audio_url);
-    if (ready) return ready;
+    if (ready) {
+      return {
+        ...ready,
+        audio_url: normalizeSunoAudioUrl(ready.audio_url),
+      };
+    }
 
     await new Promise(res => setTimeout(res, intervalMs));
   }
@@ -523,7 +556,7 @@ app.get('/api/song-status', async (req, res) => {
         tags: r.tags,
         lyrics: r.lyrics,
         image_url: r.image_url,
-        audio_url: r.audio_url,
+        audio_url: normalizeSunoAudioUrl(r.audio_url),
         video_url: r.video_url,
         created_at: r.created_at,
         mv: r.mv,

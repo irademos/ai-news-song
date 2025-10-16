@@ -343,10 +343,44 @@
     let latestSummary = '';
     let generateSongButton = null;
 
-    const PROXYABLE_AUDIO_HOSTS = ['audiopipe.suno.ai'];
+    const PROXYABLE_AUDIO_HOSTS = [
+      'audiopipe.suno.ai',
+      'cdn.suno.ai',
+      'cdn1.suno.ai',
+      'cdn2.suno.ai',
+      'cdn3.suno.ai',
+    ];
+
+    const SUNO_AUDIO_HOST_MIGRATIONS = new Map([
+      ['audiopipe.suno.ai', 'cdn1.suno.ai'],
+    ]);
+
+    function normalizeSunoAudioUrl(value) {
+      if (typeof value !== 'string') return '';
+
+      const trimmed = value.trim();
+      if (!trimmed) return '';
+
+      if (trimmed.startsWith('/')) return trimmed;
+
+      try {
+        const parsed = new URL(trimmed);
+        const lowerHost = parsed.hostname.toLowerCase();
+        const migratedHost = SUNO_AUDIO_HOST_MIGRATIONS.get(lowerHost);
+
+        if (migratedHost) {
+          parsed.hostname = migratedHost;
+          return parsed.toString();
+        }
+
+        return parsed.toString();
+      } catch {
+        return trimmed;
+      }
+    }
 
     function sanitizeAudioUrl(value) {
-      return typeof value === 'string' ? value.trim() : '';
+      return normalizeSunoAudioUrl(value);
     }
 
     function needsAudioProxy(url) {
@@ -626,7 +660,7 @@
         const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs: 180000, intervalMs: 15000 });
 
         const createdAt = clip.created_at ? new Date(clip.created_at) : new Date();
-        const audioUrl = typeof clip.audio_url === 'string' ? clip.audio_url.trim() : '';
+        const audioUrl = typeof clip.audio_url === 'string' ? normalizeSunoAudioUrl(clip.audio_url) : '';
         const summaryText = (latestSummary || body.prompt || '').trim();
         const songRecord = {
           id: clip.id || null,
