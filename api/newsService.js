@@ -52,9 +52,10 @@ function parseFeed(xml, limit) {
     const itemXml = match[1];
     const headline = stripHtml(extractTagValue(itemXml, 'title'));
     const summary = stripHtml(extractTagValue(itemXml, 'description'));
+    const link = extractTagValue(itemXml, 'link');
 
     if (headline) {
-      items.push({ headline, summary });
+      items.push({ headline, summary, link });
     }
   }
 

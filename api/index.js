@@ -2,8 +2,9 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { fetchTopNews } = require('./newsService');
+const { fetchArticleContent } = require('./articleService');
 
-const SUNO_PROMPT_MAX_CHARS = 397;
+const SUNO_PROMPT_MAX_CHARS = 3000;
 const OPEN_ROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPEN_ROUTER_MODEL = process.env.OPEN_ROUTER_MODEL || 'deepseek/deepseek-chat-v3.1:free'; // 'meta-llama/llama-3.1-8b-instruct:free';
 
@@ -66,6 +67,34 @@ app.get('/api/firebase-config', (_req, res) => {
   res.json(config);
 });
 
+app.get('/api/news-headlines', async (req, res) => {
+  const limit = Math.max(1, Math.min(20, Number.parseInt(req.query.limit, 10) || 8));
+
+  try {
+    const stories = await fetchTopNews(limit);
+    const seen = new Set();
+    const uniqueStories = [];
+
+    for (const story of stories) {
+      if (!story?.headline) continue;
+      const key = story.link || `${story.source || 'source'}:${story.headline}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniqueStories.push({
+        headline: story.headline,
+        summary: story.summary || '',
+        source: story.source || '',
+        link: story.link || '',
+      });
+      if (uniqueStories.length >= limit) break;
+    }
+
+    res.json({ stories: uniqueStories });
+  } catch (error) {
+    res.status(502).json({ error: 'Unable to load news headlines.', details: error.message });
+  }
+});
+
 function enforcePromptLimit(text, max = SUNO_PROMPT_MAX_CHARS) {
   if (typeof text !== 'string') return '';
   const normalised = text.replace(/\s+$/g, '').trim();
@@ -88,6 +117,64 @@ function formatStoriesForModel(stories) {
     })
     .filter(Boolean)
     .join('\n');
+}
+
+async function summarizeArticleWithOpenRouter({ headline, source, articleText }) {
+  const apiKey = process.env.OPEN_ROUTER_KEY;
+  if (!apiKey) {
+    throw new Error('OpenRouter API key is not configured.');
+  }
+
+  if (!articleText) {
+    throw new Error('No article content was provided for summarisation.');
+  }
+
+  const truncatedArticle = articleText.length > 20000 ? `${articleText.slice(0, 20000)}…` : articleText;
+
+  const messages = [
+    {
+      role: 'system',
+      content:
+        'You are an expert journalist who writes thorough but concise news summaries. Respond with polished paragraphs in plain text only. Keep the summary factual, neutral, and as close as possible to but strictly under 3000 characters.',
+    },
+    {
+      role: 'user',
+      content: `Summarise the following article so the result is under 3000 characters. Aim for around 2800 characters when information allows. Mention the most important facts, timelines, and stakeholders without speculation.\n\nHeadline: ${headline || 'Unknown headline'}\nSource: ${source || 'Unknown source'}\n\nArticle Content:\n${truncatedArticle}`,
+    },
+  ];
+
+  const response = await fetch(OPEN_ROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPEN_ROUTER_MODEL,
+      messages,
+      temperature: 0.4,
+    }),
+  });
+
+  const raw = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`OpenRouter returned non-JSON response: ${error.message || 'parse error'}`);
+  }
+
+  if (!response.ok) {
+    const details = payload?.error?.message || payload?.error || raw;
+    throw new Error(typeof details === 'string' ? details : 'OpenRouter summarisation failed');
+  }
+
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content || typeof content !== 'string') {
+    throw new Error('OpenRouter did not return a summary.');
+  }
+
+  return enforcePromptLimit(content, SUNO_PROMPT_MAX_CHARS);
 }
 
 async function generateLyricsWithOpenRouter(stories) {
@@ -188,7 +275,7 @@ async function pollForAudio(clipIds, { timeoutMs = 120000, intervalMs = 2500 } =
 
 
 // POST /api/generate-song
-app.post('/api/generate-song', async (_req, res) => {
+app.post('/api/generate-song', async (req, res) => {
   const sunoApiKey = process.env.suno_api || process.env.SUNO_API || process.env.SUNO_API_KEY;
   if (!sunoApiKey) return res.status(500).json({ error: 'Suno API key is not configured.' });
 
@@ -196,19 +283,39 @@ app.post('/api/generate-song', async (_req, res) => {
     return res.status(500).json({ error: 'OpenRouter API key is not configured.' });
   }
 
-  const stories = await fetchTopNews(5);
-  if (!stories.length) return res.status(503).json({ error: 'No news headlines are available right now.' });
+  const { url, headline, source } = req.body || {};
 
-  let lyrics;
-  try {
-    lyrics = await generateLyricsWithOpenRouter(stories);
-  } catch (error) {
-    console.error('Unable to create lyrics with OpenRouter:', error);
-    return res.status(502).json({ error: 'Unable to create lyrics from OpenRouter.', details: error.message });
+  let preparedLyrics = '';
+
+  if (url) {
+    let articleText;
+    try {
+      articleText = await fetchArticleContent(url);
+    } catch (error) {
+      console.error('Unable to fetch full article content:', error);
+      return res.status(502).json({ error: 'Unable to retrieve the full article for the selected headline.', details: error.message });
+    }
+
+    try {
+      preparedLyrics = await summarizeArticleWithOpenRouter({ headline, source, articleText });
+    } catch (error) {
+      console.error('Unable to summarise article with OpenRouter:', error);
+      return res.status(502).json({ error: 'Unable to summarise the article with OpenRouter.', details: error.message });
+    }
+  } else {
+    const stories = await fetchTopNews(5);
+    if (!stories.length) return res.status(503).json({ error: 'No news headlines are available right now.' });
+
+    try {
+      preparedLyrics = await generateLyricsWithOpenRouter(stories);
+    } catch (error) {
+      console.error('Unable to create lyrics with OpenRouter:', error);
+      return res.status(502).json({ error: 'Unable to create lyrics from OpenRouter.', details: error.message });
+    }
   }
 
-  const prompt = lyrics;
-  console.log('Suno prompt (lyrics):', prompt);
+  const prompt = enforcePromptLimit(preparedLyrics);
+  console.log('Suno prompt (lyrics) length:', prompt.length);
 
   const resp = await fetch('https://api.sunoapi.com/api/v1/suno/create', {
     method: 'POST',
@@ -245,10 +352,10 @@ app.post('/api/generate-song', async (_req, res) => {
 
   // If we got nothing, return the raw body to debug quickly
   if (!taskIds.length && !clipIds.length) {
-    return res.status(202).json({ task_ids: [], clip_ids: [], raw: data, prompt });
+    return res.status(202).json({ task_ids: [], clip_ids: [], raw: data, prompt, summary: prompt });
   }
 
-  return res.status(202).json({ task_ids: [...new Set(taskIds)], clip_ids: [...new Set(clipIds)], prompt });
+  return res.status(202).json({ task_ids: [...new Set(taskIds)], clip_ids: [...new Set(clipIds)], prompt, summary: prompt });
 });
 
 
