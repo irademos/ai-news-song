@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
 
@@ -15,6 +16,25 @@ const LYRIC_MODELS = [
   'google/gemini-1.5-flash',
   'meta/llama-3.1-8b-instruct',
 ];
+
+const ALLOWED_AUDIO_HOSTS = new Set([
+  'audiopipe.suno.ai',
+  'cdn.suno.ai',
+  'cdn1.suno.ai',
+  'cdn2.suno.ai',
+  'cdn3.suno.ai',
+]);
+
+function isAllowedAudioHost(hostname) {
+  if (!hostname) return false;
+  const lower = hostname.toLowerCase();
+  for (const allowed of ALLOWED_AUDIO_HOSTS) {
+    if (lower === allowed || lower.endsWith(`.${allowed}`)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -513,6 +533,57 @@ app.get('/api/song-status', async (req, res) => {
     });
   } catch (error) {
     return res.status(502).json({ error: 'Suno task lookup failed', details: String(error?.message || error) });
+  }
+});
+
+
+app.get('/api/proxy-audio', async (req, res) => {
+  const src = typeof req.query.src === 'string' ? req.query.src : '';
+
+  if (!src) {
+    return res.status(400).json({ error: 'A valid audio URL is required.' });
+  }
+
+  let url;
+  try {
+    url = new URL(src);
+  } catch {
+    return res.status(400).json({ error: 'Audio URL is invalid.' });
+  }
+
+  if (url.protocol !== 'https:') {
+    return res.status(400).json({ error: 'Only HTTPS audio sources are supported.' });
+  }
+
+  if (!isAllowedAudioHost(url.hostname)) {
+    return res.status(403).json({ error: 'Audio host is not permitted.' });
+  }
+
+  try {
+    const upstream = await fetch(url, {
+      headers: {
+        'User-Agent': 'Daily-Spin/1.0',
+      },
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      return res
+        .status(upstream.status || 502)
+        .json({ error: 'Unable to retrieve audio from source.' });
+    }
+
+    const contentType = upstream.headers.get('content-type') || 'audio/mpeg';
+    const contentLength = upstream.headers.get('content-length');
+
+    res.setHeader('Content-Type', contentType);
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (error) {
+    res.status(502).json({ error: 'Audio proxy request failed.', details: String(error?.message || error) });
   }
 });
 

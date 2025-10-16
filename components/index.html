@@ -343,6 +343,34 @@
     let latestSummary = '';
     let generateSongButton = null;
 
+    const PROXYABLE_AUDIO_HOSTS = ['audiopipe.suno.ai'];
+
+    function sanitizeAudioUrl(value) {
+      return typeof value === 'string' ? value.trim() : '';
+    }
+
+    function needsAudioProxy(url) {
+      try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.toLowerCase();
+        return PROXYABLE_AUDIO_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+      } catch {
+        return false;
+      }
+    }
+
+    function getPlayableAudioUrl(rawUrl) {
+      const sanitized = sanitizeAudioUrl(rawUrl);
+      if (!sanitized) return '';
+      if (sanitized.startsWith('/api/proxy-audio?')) {
+        return sanitized;
+      }
+      if (needsAudioProxy(sanitized)) {
+        return `/api/proxy-audio?src=${encodeURIComponent(sanitized)}`;
+      }
+      return sanitized;
+    }
+
     async function initFirebase() {
       if (firebaseInitPromise) return firebaseInitPromise;
 
@@ -598,10 +626,11 @@
         const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs: 180000, intervalMs: 15000 });
 
         const createdAt = clip.created_at ? new Date(clip.created_at) : new Date();
+        const audioUrl = typeof clip.audio_url === 'string' ? clip.audio_url.trim() : '';
         const summaryText = (latestSummary || body.prompt || '').trim();
         const songRecord = {
           id: clip.id || null,
-          audioUrl: clip.audio_url || '',
+          audioUrl,
           title: clip.title || 'Daily Spin (Suno)',
           artist: clip.artist || 'Suno AI',
           sunoTitle: clip.title || 'Daily Spin (Suno)',
@@ -758,9 +787,10 @@
         detailSections.push(`Lyrics:\n${song.lyrics}`);
       }
       description.textContent = detailSections.join('\n\n') || 'Details are unavailable for this spin.';
-      source.src = song.audioUrl || song.streamUrl || '';
+      const playableSrc = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
+      source.src = playableSrc;
       audio.load();
-      if (source.src) {
+      if (playableSrc) {
         audio.play().catch(() => {});
       }
 
@@ -803,6 +833,9 @@
                   ? new Date(data.generatedAtIso)
                   : null);
 
+              const rawAudioUrl = sanitizeAudioUrl(data.audioUrl);
+              const rawStreamUrl = sanitizeAudioUrl(data.streamUrl);
+
               return {
                 id: doc.id,
                 title: data.title || data.sunoTitle || 'Daily Spin (Suno)',
@@ -810,7 +843,7 @@
                 artist: data.artist || data.sunoArtist || 'Suno AI',
                 sunoArtist: data.sunoArtist || data.artist || 'Suno AI',
                 lyrics: data.lyrics || data.prompt || '',
-                audioUrl: data.audioUrl || data.streamUrl || '',
+                audioUrl: rawAudioUrl || rawStreamUrl,
                 createdAt,
                 prompt: data.prompt || '',
                 articleHeadline: data.articleHeadline || '',
@@ -913,9 +946,10 @@
         detailSections.push(`Lyrics:\n${song.lyrics}`);
       }
       desc.textContent = detailSections.join('\n\n') || 'Your Suno track is ready. Enjoy!';
-      source.src = song.audioUrl || song.streamUrl || '';
+      const playableSrc = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
+      source.src = playableSrc;
       audio.load();
-      if (source.src) {
+      if (playableSrc) {
         audio.play().catch(() => {});
       }
 
@@ -958,7 +992,9 @@
       await initFirebase();
       if (!db) throw new Error('Firebase is not available.');
 
-      if (!song || !song.audioUrl) {
+      const sanitizedUrl = sanitizeAudioUrl(song?.audioUrl || song?.streamUrl || '');
+
+      if (!song || !sanitizedUrl) {
         throw new Error('Suno did not return an audio URL to save.');
       }
 
@@ -971,7 +1007,7 @@
         sunoTitle: song.sunoTitle || song.title || 'Daily Spin (Suno)',
         sunoArtist: song.sunoArtist || song.artist || 'Suno AI',
         lyrics: (song.lyrics || '').trim(),
-        audioUrl: song.audioUrl,
+        audioUrl: sanitizedUrl,
         prompt: song.prompt || '',
         articleHeadline: song.articleHeadline || '',
         articleSummary: song.articleSummary || '',
