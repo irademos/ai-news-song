@@ -3,9 +3,76 @@ const fs = require('fs');
 const path = require('path');
 const { fetchTopNews } = require('./newsService');
 
-const SUNO_PROMPT_MAX_CHARS = 397;
+const SUNO_PROMPT_MAX_CHARS = 3000;
 const OPEN_ROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPEN_ROUTER_MODEL = process.env.OPEN_ROUTER_MODEL || 'deepseek/deepseek-chat-v3.1:free'; // 'meta-llama/llama-3.1-8b-instruct:free';
+const LYRIC_MODELS = [
+  // Order matters: try fastest/cheapest first, then stronger fallbacks.
+  'deepseek/deepseek-chat-v3.1:free',
+  'meta-llama/llama-3.1-8b-instruct:free',
+  'openai/gpt-4o-mini',
+  'anthropic/claude-3.5-sonnet',
+  'google/gemini-1.5-flash',
+  'meta/llama-3.1-8b-instruct',
+];
+const OPENROUTER_HEADERS = {
+  'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+  // OpenRouter recommends these two for routing/analytics; not strictly required but helps reliability:
+  'HTTP-Referer': process.env.SITE_URL || 'http://localhost:3000',
+  'X-Title': 'Daily Spin', //'ai-news-song'
+  'Content-Type': 'application/json',
+};
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function callOpenRouterOnce({ model, messages, timeoutMs = 20000 }) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(OPEN_ROUTER_API_URL, {
+      method: 'POST',
+      headers: OPENROUTER_HEADERS,
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.85,
+        max_tokens: 400,
+      }),
+      signal: ctrl.signal,
+    });
+
+    // Treat 5xx as retryable; 4xx as terminal for this model
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const err = new Error(`OpenRouter ${res.status}: ${text || res.statusText}`);
+      err.status = res.status;
+      throw err;
+    }
+
+    const json = await res.json();
+    const content = json?.choices?.[0]?.message?.content?.trim();
+    if (!content) throw new Error('OpenRouter did not return content');
+    return content;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function callOpenRouterWithRetries({ model, messages, attempts = 3 }) {
+  let delay = 750;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await callOpenRouterOnce({ model, messages });
+    } catch (err) {
+      // 5xx/abort -> retry; 4xx -> stop
+      const status = err.status || 0;
+      const retryable = status >= 500 || status === 0; // 0 = fetch/abort/network
+      if (!retryable || i === attempts - 1) throw err;
+      await sleep(delay);
+      delay *= 2; // backoff
+    }
+  }
+}
 
 function loadEnv() {
   const envFile = path.join(__dirname, '..', '.env');
@@ -91,72 +158,40 @@ function formatStoriesForModel(stories) {
 }
 
 async function generateLyricsWithOpenRouter(stories) {
-  const apiKey = process.env.OPEN_ROUTER_KEY;
-  if (!apiKey) {
-    throw new Error('OpenRouter API key is not configured.');
-  }
-
   const newsDigest = formatStoriesForModel(stories);
+  const system = [
+    'You are a news reporter writing literal, clear, factual lyrics about current events.',
+    'Keep the response under 3000 characters. Do not include introductions or commentary—respond with lyrics only.',
+  ].join(' ');
+  const user = [
+    `Use these headlines to craft a cohesive set of song lyrics.`,
+    `Mention the concrete events and provide details. Prefer accurate clear description of the news.\n\n${newsDigest}`,
+  ].join(' ');
   const messages = [
-    {
-      role: 'system',
-      content:
-        'You are a news reporter writing literal, clear, factual lyrics about current events. Keep the response under 3000 characters. Do not include introductions or commentary—respond with lyrics only.',
-    },
-    {
-      role: 'user',
-      content: `Use these headlines from BBC News and NPR to craft a cohesive set of song lyrics. Mention the concrete events while keeping tone thoughtful, empathetic, and suitable for an alternative pop track.\n\n${newsDigest}`,
-    },
+    { role: 'system', content: system },
+    { role: 'user', content: user },
   ];
 
-  // const response = await fetch(OPEN_ROUTER_API_URL, {
-  //   method: 'POST',
-  //   headers: {
-  //     Authorization: `Bearer ${apiKey}`,
-  //     'Content-Type': 'application/json',
-  //     'HTTP-Referer': 'https://daily-spin.local',
-  //     'X-Title': 'Daily Spin',
-  //   },
-  //   body: JSON.stringify({
-  //     model: OPEN_ROUTER_MODEL,
-  //     messages,
-  //     max_tokens: 300,
-  //     temperature: 0.7,
-  //   }),
-  // });
-
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      "model": "deepseek/deepseek-chat-v3.1:free",
-      messages
-    })
-  });
-
-  const raw = await response.text();
-  console.log(raw);
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`OpenRouter returned non-JSON response: ${error.message || 'parse error'}`);
+  const errors = [];
+  for (const model of LYRIC_MODELS) {
+    console.log("trying model:", model);
+    try {
+      const lyrics = await callOpenRouterWithRetries({ model, messages, attempts: 3 });
+      console.log("lyrics:", lyrics, "test:", /\w/.test(lyrics));
+      if (lyrics && /\w/.test(lyrics)) return enforcePromptLimit(lyrics);
+    } catch (e) {
+      console.log(model, e);
+      errors.push(`[${model}] ${e.message}`);
+      continue;
+    }
   }
 
-  if (!response.ok) {
-    const details = payload?.error?.message || payload?.error || raw;
-    throw new Error(typeof details === 'string' ? details : 'OpenRouter lyric generation failed');
-  }
+  // Last-resort stub so the Suno step can proceed
+  const fallback = [
+    `${newsDigest}`,
+  ].join('\n');
 
-  const content = payload?.choices?.[0]?.message?.content;
-  if (!content || typeof content !== 'string') {
-    throw new Error('OpenRouter did not provide any lyrics.');
-  }
-
-  return enforcePromptLimit(content);
+  return enforcePromptLimit(fallback);
 }
 
 async function generateSongFromNews() {
@@ -214,8 +249,8 @@ app.post('/api/generate-song', async (_req, res) => {
     method: 'POST',
     headers: { Authorization: `Bearer ${sunoApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      custom_mode: false,
-      gpt_description_prompt: prompt,
+      custom_mode: true,
+      prompt: prompt,
       make_instrumental: false,
       mv: 'chirp-v5',
     }),
