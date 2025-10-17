@@ -46,12 +46,40 @@
 
     @media (max-width: 860px) {
       body {
-        padding: 1rem;
+        padding: 0;
+        align-items: stretch;
       }
 
       .app-shell {
         grid-template-columns: 1fr;
-        padding: 1.5rem;
+        padding: 1.25rem 1.25rem 10.5rem;
+        gap: 1.5rem;
+        width: 100%;
+        border-radius: 0;
+        min-height: 100vh;
+      }
+
+      .sidebar {
+        gap: 1.5rem;
+        order: 2;
+      }
+
+      .sidebar-section {
+        max-height: none;
+        padding-bottom: 1rem;
+      }
+
+      .sidebar-section:not(.active) {
+        display: none;
+      }
+
+      .sidebar-section.active {
+        display: flex;
+      }
+
+      .headline-list,
+      .song-list {
+        max-height: none;
       }
 
       .song-list button {
@@ -60,6 +88,60 @@
 
       .song-thumb {
         width: 64px;
+      }
+
+      .player-panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: calc(64px + 72px + 1rem);
+        margin: 0 1rem;
+        transform: translateY(calc(100% + 2rem));
+        transition: transform 0.35s ease;
+        max-height: calc(100vh - 9rem);
+        overflow: hidden;
+      }
+
+      body.mobile-player-open .player-panel {
+        transform: translateY(0);
+      }
+
+      body.mobile-player-open .mobile-now-playing__chevron {
+        transform: rotate(0deg);
+      }
+
+      .mobile-now-playing,
+      .mobile-bottom-nav {
+        display: flex;
+        position: fixed;
+        left: 0;
+        right: 0;
+      }
+
+      .mobile-now-playing {
+        bottom: 64px;
+        padding-left: 1.25rem;
+        padding-right: 1.25rem;
+      }
+
+      .mobile-bottom-nav {
+        bottom: 0;
+        padding-left: 1.25rem;
+        padding-right: 1.25rem;
+      }
+
+      .mobile-player-scrim {
+        display: none;
+      }
+
+      body.mobile-player-open .mobile-player-scrim {
+        display: block;
+      }
+
+      .mobile-now-playing,
+      .mobile-bottom-nav {
+        padding-left: max(1.25rem, env(safe-area-inset-left));
+        padding-right: max(1.25rem, env(safe-area-inset-right));
       }
     }
 
@@ -232,6 +314,8 @@
       gap: 1.5rem;
       justify-content: space-between;
       box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.07);
+      position: relative;
+      z-index: 2;
     }
 
     .player-header {
@@ -273,14 +357,183 @@
       background: rgba(15, 23, 42, 0.6);
     }
 
-    .lyrics {
+    .player-tabs {
+      display: inline-flex;
+      gap: 0.25rem;
+      padding: 0.35rem;
+      background: rgba(148, 163, 184, 0.15);
+      border-radius: 999px;
+      align-self: flex-start;
+    }
+
+    .player-tab {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      padding: 0.4rem 0.95rem;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .player-tab.active {
+      background: rgba(15, 23, 42, 0.8);
+      color: var(--text);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-panels {
+      background: rgba(15, 23, 42, 0.55);
+      border-radius: 18px;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      max-height: 260px;
+      overflow: hidden;
+    }
+
+    .tab-panel {
       font-size: 0.95rem;
       line-height: 1.7;
       color: rgba(226, 232, 240, 0.9);
       white-space: pre-wrap;
-      max-height: 200px;
       overflow-y: auto;
       padding-right: 0.75rem;
+      flex: 1;
+    }
+
+    .tab-panel[hidden] {
+      display: none;
+    }
+
+    .mobile-now-playing,
+    .mobile-bottom-nav,
+    .mobile-player-scrim {
+      display: none;
+    }
+
+    .mobile-now-playing {
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 1.25rem;
+      background: rgba(15, 23, 42, 0.92);
+      border-top: 1px solid rgba(148, 163, 184, 0.15);
+      box-shadow: 0 -18px 38px rgba(15, 23, 42, 0.35);
+      backdrop-filter: blur(18px);
+      color: var(--text);
+      z-index: 30;
+    }
+
+    .mobile-now-playing__toggle {
+      background: none;
+      border: none;
+      color: inherit;
+      display: flex;
+      flex: 1;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .mobile-now-playing__details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      overflow: hidden;
+    }
+
+    .mobile-now-playing__title {
+      font-weight: 600;
+      font-size: 1rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mobile-now-playing__meta {
+      font-size: 0.85rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mobile-now-playing__chevron {
+      font-size: 1.1rem;
+      transform: rotate(180deg);
+      transition: transform 0.25s ease;
+    }
+
+    .mobile-now-playing__play {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      border: none;
+      background: var(--accent);
+      color: #0b0f16;
+      font-weight: 700;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+    }
+
+    .mobile-now-playing__play:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .mobile-now-playing__play:not(:disabled):hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 30px rgba(245, 158, 11, 0.45);
+    }
+
+    .mobile-bottom-nav {
+      background: rgba(15, 23, 42, 0.95);
+      border-top: 1px solid rgba(148, 163, 184, 0.15);
+      backdrop-filter: blur(18px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem env(safe-area-inset-bottom, 1rem);
+      z-index: 30;
+    }
+
+    .mobile-bottom-nav__button {
+      flex: 1;
+      background: rgba(148, 163, 184, 0.12);
+      border: none;
+      color: var(--muted);
+      padding: 0.75rem 1rem;
+      border-radius: 14px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+    }
+
+    .mobile-bottom-nav__button.active {
+      background: rgba(245, 158, 11, 0.18);
+      color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .mobile-player-scrim {
+      background: rgba(15, 23, 42, 0.6);
+      position: fixed;
+      inset: 0;
+      z-index: 15;
     }
 
     .empty-state {
@@ -332,7 +585,7 @@
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <section class="sidebar-section">
+      <section class="sidebar-section" data-section="headlines">
         <header>
           <h2>Top Headlines</h2>
           <p>Select a headline to read the story and optionally spin a new track.</p>
@@ -340,7 +593,7 @@
         <ul class="headline-list" id="headlineList"></ul>
       </section>
 
-      <section class="sidebar-section">
+      <section class="sidebar-section" data-section="recent">
         <header>
           <h2>Recent Spins</h2>
           <p>The latest Suno creations saved from Daily Spin.</p>
@@ -361,9 +614,56 @@
         Your browser does not support the audio element.
       </audio>
 
-      <section class="lyrics" id="songDescription">
-        Article summaries will appear here after you pick a headline.
-      </section>
+      <div class="player-tabs" role="tablist" aria-label="Now playing content">
+        <button
+          type="button"
+          class="player-tab active"
+          id="articleTab"
+          data-role="player-tab"
+          data-tab="article"
+          role="tab"
+          aria-controls="songArticle"
+          aria-selected="true"
+        >
+          Article
+        </button>
+        <button
+          type="button"
+          class="player-tab"
+          id="lyricsTab"
+          data-role="player-tab"
+          data-tab="lyrics"
+          role="tab"
+          aria-controls="songLyrics"
+          aria-selected="false"
+        >
+          Lyrics
+        </button>
+      </div>
+
+      <div class="tab-panels">
+        <section
+          id="songArticle"
+          class="tab-panel"
+          data-role="tab-panel"
+          data-tab="article"
+          role="tabpanel"
+          aria-labelledby="articleTab"
+        >
+          Article summaries will appear here after you pick a headline.
+        </section>
+        <section
+          id="songLyrics"
+          class="tab-panel"
+          data-role="tab-panel"
+          data-tab="lyrics"
+          role="tabpanel"
+          aria-labelledby="lyricsTab"
+          hidden
+        >
+          Lyrics will appear here after you generate or load a spin.
+        </section>
+      </div>
 
       <section class="generate-song">
         <button type="button" id="generateSongButton" disabled>Generate Song</button>
@@ -371,6 +671,32 @@
       </section>
     </main>
   </div>
+
+  <div class="mobile-now-playing" id="mobileNowPlaying" aria-hidden="true">
+    <button type="button" class="mobile-now-playing__toggle" id="mobileNowPlayingToggle" aria-expanded="false">
+      <div class="mobile-now-playing__details">
+        <span class="mobile-now-playing__title" id="mobileNowPlayingTitle">Choose a headline</span>
+        <span class="mobile-now-playing__meta" id="mobileNowPlayingMeta"
+          >Select a headline from the list to load the article.</span
+        >
+      </div>
+      <span class="mobile-now-playing__chevron" aria-hidden="true">⌃</span>
+    </button>
+    <button type="button" class="mobile-now-playing__play" id="mobilePlayButton" aria-label="Play" disabled>
+      ▶
+    </button>
+  </div>
+
+  <div class="mobile-player-scrim" id="mobilePlayerScrim" hidden></div>
+
+  <nav class="mobile-bottom-nav" aria-label="Primary">
+    <button type="button" class="mobile-bottom-nav__button active" data-role="mobile-nav" data-target="headlines">
+      Headlines
+    </button>
+    <button type="button" class="mobile-bottom-nav__button" data-role="mobile-nav" data-target="recent">
+      Recent Spins
+    </button>
+  </nav>
 
   <template id="headlineItemTemplate">
     <li>
@@ -434,6 +760,7 @@
     let groupedHeadlines = new Map();
     let selectedHeadlineSource = null;
     let generateSongButton = null;
+    let activeContentTab = 'article';
 
     const PROXYABLE_AUDIO_HOSTS = [
       'audiopipe.suno.ai',
@@ -562,17 +889,119 @@
       }
     }
 
+    function setActiveTab(tab) {
+      const normalized = tab === 'lyrics' ? 'lyrics' : 'article';
+      activeContentTab = normalized;
+
+      document.querySelectorAll('[data-role="player-tab"]').forEach((button) => {
+        const isActive = button.dataset.tab === normalized;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        button.setAttribute('tabindex', isActive ? '0' : '-1');
+      });
+
+      document.querySelectorAll('[data-role="tab-panel"]').forEach((panel) => {
+        const shouldShow = panel.dataset.tab === normalized;
+        if (shouldShow) {
+          panel.removeAttribute('hidden');
+        } else {
+          panel.setAttribute('hidden', '');
+        }
+      });
+    }
+
+    function syncMobilePlayButton() {
+      const audio = document.getElementById('audioPlayer');
+      const playButton = document.getElementById('mobilePlayButton');
+      const source = document.getElementById('audioSource');
+      if (!playButton) return;
+
+      const sourceValue = source ? source.getAttribute('src') : '';
+      const hasSource = Boolean(sourceValue);
+      playButton.disabled = !hasSource;
+
+      if (!audio) {
+        playButton.textContent = '▶';
+        playButton.setAttribute('aria-label', 'Play');
+        return;
+      }
+
+      const isPlaying = !audio.paused && !audio.ended;
+      playButton.textContent = isPlaying ? '❚❚' : '▶';
+      const label = isPlaying ? 'Pause' : hasSource ? 'Play' : 'Play (unavailable)';
+      playButton.setAttribute('aria-label', label);
+    }
+
+    function syncMobileNowPlayingBar() {
+      const bar = document.getElementById('mobileNowPlaying');
+      if (!bar) return;
+
+      const desktopTitle = document.getElementById('songTitle');
+      const desktopMeta = document.getElementById('songMeta');
+      const mobileTitle = document.getElementById('mobileNowPlayingTitle');
+      const mobileMeta = document.getElementById('mobileNowPlayingMeta');
+
+      if (mobileTitle && desktopTitle) {
+        mobileTitle.textContent = desktopTitle.textContent || '';
+      }
+      if (mobileMeta && desktopMeta) {
+        mobileMeta.textContent = desktopMeta.textContent || '';
+      }
+
+      bar.setAttribute('aria-hidden', 'false');
+      syncMobilePlayButton();
+    }
+
+    function setActiveMobileSection(section) {
+      const normalized = section === 'recent' ? 'recent' : 'headlines';
+
+      document.querySelectorAll('[data-role="mobile-nav"]').forEach((button) => {
+        const isActive = button.dataset.target === normalized;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+
+      document.querySelectorAll('.sidebar-section').forEach((panel) => {
+        const isMatch = panel.dataset.section === normalized;
+        panel.classList.toggle('active', isMatch);
+      });
+    }
+
+    function toggleMobilePlayer(force) {
+      const body = document.body;
+      if (!body) return;
+      const scrim = document.getElementById('mobilePlayerScrim');
+      const toggle = document.getElementById('mobileNowPlayingToggle');
+
+      const shouldOpen = typeof force === 'boolean' ? force : !body.classList.contains('mobile-player-open');
+      body.classList.toggle('mobile-player-open', shouldOpen);
+
+      if (toggle) {
+        toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+      }
+
+      if (scrim) {
+        scrim.hidden = !shouldOpen;
+      }
+    }
+
     function resetNowPlaying() {
       const title = document.getElementById('songTitle');
       const meta = document.getElementById('songMeta');
-      const description = document.getElementById('songDescription');
+      const articlePanel = document.getElementById('songArticle');
+      const lyricsPanel = document.getElementById('songLyrics');
       const audio = document.getElementById('audioPlayer');
       const source = document.getElementById('audioSource');
       const tag = document.getElementById('songTag');
 
       title.textContent = 'Choose a headline';
       meta.textContent = 'Select a news headline to read the story and optionally spin a Suno track.';
-      description.textContent = 'Article summaries will appear here after you pick a headline.';
+      if (articlePanel) {
+        articlePanel.textContent = 'Article summaries will appear here after you pick a headline.';
+      }
+      if (lyricsPanel) {
+        lyricsPanel.textContent = 'Lyrics will appear here after you generate or load a spin.';
+      }
       source.src = '';
       audio.load();
       tag.textContent = 'Top Stories';
@@ -582,7 +1011,10 @@
       selectedStory = null;
       latestArticleContent = '';
       latestSummary = '';
+      setActiveTab('article');
       updateGenerateButton({ disabled: true, text: 'Generate Song' });
+      syncMobileNowPlayingBar();
+      toggleMobilePlayer(false);
     }
 
     function showListEmptyState(listId, message) {
@@ -753,19 +1185,24 @@
 
       const title = document.getElementById('songTitle');
       const meta = document.getElementById('songMeta');
-      const description = document.getElementById('songDescription');
+      const articlePanel = document.getElementById('songArticle');
+      const lyricsPanel = document.getElementById('songLyrics');
       const tag = document.getElementById('songTag');
 
       if (title) title.textContent = story.headline || 'Selected headline';
       if (meta) meta.textContent = story.source || 'Breaking news';
-      if (description)
-        description.textContent = story.summary || 'Fetching the full article…';
+      if (articlePanel)
+        articlePanel.textContent = story.summary || 'Fetching the full article…';
+      if (lyricsPanel)
+        lyricsPanel.textContent = 'Lyrics will appear once a Suno track has been generated.';
       if (tag) {
         tag.textContent = 'Article';
         tag.style.background = 'rgba(245, 158, 11, 0.18)';
         tag.style.color = 'var(--accent)';
       }
 
+      setActiveTab('article');
+      syncMobileNowPlayingBar();
       updateGenerateButton({ disabled: true, text: 'Loading Article…' });
       updateStatus('Fetching the full article…');
       fetchAndDisplayArticle(story);
@@ -799,11 +1236,11 @@
           return;
         }
 
-        const description = document.getElementById('songDescription');
-        if (description) {
+        const articlePanel = document.getElementById('songArticle');
+        if (articlePanel) {
           const summary = (story.summary || '').trim();
           const combined = summary && article ? `${summary}\n\n${article}` : summary || article;
-          description.textContent = combined || 'The article is available, but it is empty.';
+          articlePanel.textContent = combined || 'The article is available, but it is empty.';
         }
 
         const tag = document.getElementById('songTag');
@@ -820,9 +1257,9 @@
         if (!selectedStory || selectedStory.key !== story.key) {
           return;
         }
-        const description = document.getElementById('songDescription');
-        if (description) {
-          description.textContent =
+        const articlePanel = document.getElementById('songArticle');
+        if (articlePanel) {
+          articlePanel.textContent =
             story.summary || 'Unable to load the full article. You can still try generating a song.';
         }
 
@@ -873,10 +1310,16 @@
         const summary = body.summary || body.prompt || story.summary || '';
         latestSummary = summary;
 
-        const description = document.getElementById('songDescription');
-        if (description) {
-          description.textContent = summary || 'Waiting for OpenRouter to provide a summary…';
+        const articlePanel = document.getElementById('songArticle');
+        const lyricsPanel = document.getElementById('songLyrics');
+        if (articlePanel) {
+          articlePanel.textContent = summary || 'Waiting for OpenRouter to provide a summary…';
         }
+        if (lyricsPanel) {
+          lyricsPanel.textContent = 'Lyrics will appear once Suno finishes rendering your track.';
+        }
+        setActiveTab('article');
+        syncMobileNowPlayingBar();
 
         const taskIds = Array.isArray(body.task_ids) ? body.task_ids : [];
         const clipIds = Array.isArray(body.clip_ids) ? body.clip_ids : [];
@@ -1073,7 +1516,8 @@
 
       const title = document.getElementById('songTitle');
       const meta = document.getElementById('songMeta');
-      const description = document.getElementById('songDescription');
+      const articlePanel = document.getElementById('songArticle');
+      const lyricsPanel = document.getElementById('songLyrics');
       const audio = document.getElementById('audioPlayer');
       const source = document.getElementById('audioSource');
       const tag = document.getElementById('songTag');
@@ -1087,19 +1531,24 @@
       if (formatted) metaPieces.push(formatted);
       meta.textContent = metaPieces.join(' — ') || 'Generated';
 
-      const detailSections = [];
-      if (song.articleHeadline) {
-        detailSections.push(`Headline: ${song.articleHeadline}`);
+      if (articlePanel) {
+        const articlePieces = [];
+        if (song.articleHeadline) {
+          articlePieces.push(song.articleHeadline);
+        }
+        if (song.articleContent) {
+          articlePieces.push(song.articleContent);
+        } else if (song.articleSummary) {
+          articlePieces.push(song.articleSummary);
+        }
+        articlePanel.textContent =
+          articlePieces.join('\n\n') || 'Article details are unavailable for this spin.';
       }
-      if (song.articleContent) {
-        detailSections.push(`Article:\n${song.articleContent}`);
-      } else if (song.articleSummary) {
-        detailSections.push(`Summary:\n${song.articleSummary}`);
+
+      if (lyricsPanel) {
+        const lyricsText = (song.lyrics || song.prompt || '').trim();
+        lyricsPanel.textContent = lyricsText || 'Lyrics were not provided for this spin.';
       }
-      if (song.lyrics) {
-        detailSections.push(`Lyrics:\n${song.lyrics}`);
-      }
-      description.textContent = detailSections.join('\n\n') || 'Details are unavailable for this spin.';
       const playableSrc = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
       const currentSrc = source.getAttribute('src') || '';
       if (playableSrc !== currentSrc) {
@@ -1126,6 +1575,8 @@
       document.querySelectorAll('[data-role="song-item"]').forEach((button) => {
         button.classList.toggle('active', button.dataset.id === (song.id || ''));
       });
+
+      syncMobileNowPlayingBar();
     }
 
     async function subscribeToSongs() {
@@ -1250,7 +1701,8 @@
       const source = document.getElementById('audioSource');
       const title = document.getElementById('songTitle');
       const meta = document.getElementById('songMeta');
-      const desc = document.getElementById('songDescription');
+      const articlePanel = document.getElementById('songArticle');
+      const lyricsPanel = document.getElementById('songLyrics');
       const tag = document.getElementById('songTag');
 
       const createdAt = song.createdAt instanceof Date ? song.createdAt : new Date();
@@ -1263,19 +1715,24 @@
       title.textContent = song.articleHeadline || song.sunoTitle || 'Daily Spin (Suno)';
       meta.textContent = metaPieces.join(' — ') || 'Generated';
 
-      const detailSections = [];
-      if (song.articleHeadline) {
-        detailSections.push(`Headline: ${song.articleHeadline}`);
+      if (articlePanel) {
+        const articlePieces = [];
+        if (song.articleHeadline) {
+          articlePieces.push(song.articleHeadline);
+        }
+        if (song.articleContent) {
+          articlePieces.push(song.articleContent);
+        } else if (song.articleSummary) {
+          articlePieces.push(song.articleSummary);
+        }
+        articlePanel.textContent =
+          articlePieces.join('\n\n') || 'Your Suno track is ready. Enjoy!';
       }
-      if (song.articleContent) {
-        detailSections.push(`Article:\n${song.articleContent}`);
-      } else if (song.articleSummary) {
-        detailSections.push(`Summary:\n${song.articleSummary}`);
+
+      if (lyricsPanel) {
+        const lyricsText = (song.lyrics || song.prompt || '').trim();
+        lyricsPanel.textContent = lyricsText || 'Lyrics were not provided for this spin.';
       }
-      if (song.lyrics) {
-        detailSections.push(`Lyrics:\n${song.lyrics}`);
-      }
-      desc.textContent = detailSections.join('\n\n') || 'Your Suno track is ready. Enjoy!';
       const playableSrc = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
       source.src = playableSrc;
       audio.load();
@@ -1288,6 +1745,7 @@
       tag.style.color = 'var(--accent)';
 
       currentSongId = null;
+      syncMobileNowPlayingBar();
     }
 
     async function pollForAudioIds(
@@ -1479,6 +1937,80 @@
           generateSongForHeadline(selectedStory);
         });
       }
+
+      document.querySelectorAll('[data-role="player-tab"]').forEach((button) => {
+        button.addEventListener('click', () => {
+          setActiveTab(button.dataset.tab);
+        });
+      });
+      setActiveTab(activeContentTab);
+
+      const navButtons = document.querySelectorAll('[data-role="mobile-nav"]');
+      if (navButtons.length) {
+        navButtons.forEach((button) => {
+          button.addEventListener('click', () => {
+            setActiveMobileSection(button.dataset.target);
+          });
+        });
+        setActiveMobileSection('headlines');
+      }
+
+      const mobileToggle = document.getElementById('mobileNowPlayingToggle');
+      if (mobileToggle) {
+        mobileToggle.addEventListener('click', () => {
+          if (window.matchMedia('(max-width: 860px)').matches) {
+            toggleMobilePlayer();
+          }
+        });
+      }
+
+      const mobileScrim = document.getElementById('mobilePlayerScrim');
+      if (mobileScrim) {
+        mobileScrim.addEventListener('click', () => {
+          toggleMobilePlayer(false);
+        });
+      }
+
+      const mobilePlayButton = document.getElementById('mobilePlayButton');
+      const audio = document.getElementById('audioPlayer');
+      if (mobilePlayButton && audio) {
+        mobilePlayButton.addEventListener('click', () => {
+          if (audio.paused || audio.ended) {
+            audio.play().catch(() => {});
+          } else {
+            audio.pause();
+          }
+        });
+      }
+
+      if (audio) {
+        ['play', 'pause', 'ended', 'loadeddata'].forEach((eventName) => {
+          audio.addEventListener(eventName, () => {
+            syncMobilePlayButton();
+          });
+        });
+      }
+
+      const mediaQuery = window.matchMedia('(max-width: 860px)');
+      if (typeof mediaQuery.addEventListener === 'function') {
+        mediaQuery.addEventListener('change', (event) => {
+          if (!event.matches) {
+            toggleMobilePlayer(false);
+          }
+        });
+      } else if (typeof mediaQuery.addListener === 'function') {
+        mediaQuery.addListener((event) => {
+          if (!event.matches) {
+            toggleMobilePlayer(false);
+          }
+        });
+      }
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && document.body.classList.contains('mobile-player-open')) {
+          toggleMobilePlayer(false);
+        }
+      });
 
       showListEmptyState('songList', 'Loading recent spins…');
       resetNowPlaying();
