@@ -1,17 +1,19 @@
 const https = require('https');
 
 const NEWS_SOURCES = [
-  {
-    url: 'https://feeds.npr.org/1001/rss.xml',
-    source: 'NPR',
-  },
-  {
-    url: 'https://feeds.bbci.co.uk/news/rss.xml',
-    source: 'BBC News',
-  },
+  { url: 'https://feeds.bbci.co.uk/news/world/45795429/rss.xml', source: 'BBC World News' },
+  { url: 'https://feeds.npr.org/1001/rss.xml', source: 'NPR' },
+  { url: 'https://feeds.reuters.com/reuters/worldNews', source: 'Reuters' },
+  { url: 'https://www.theguardian.com/world/rss', source: 'The Guardian' },
+  { url: 'https://www.reddit.com/r/worldnews/.rss', source: 'Reddit r/worldnews' },
+  { url: 'https://www.reddit.com/r/news/.rss', source: 'Reddit r/news'},
+  { url: 'https://www.positive.news/feed/', source: 'Positive News' },
+  // { url: 'https://feeds.npr.org/510338/podcast.xml', source: 'NPR Life Kit' },
+  { url: 'https://feeds.bbci.co.uk/news/health/rss.xml', source: 'BBC Health' }
+  // { url: 'https://www.theonion.com/rss', source: 'The Onion' },
 ];
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = 165;
 
 function decodeEntities(text) {
   return text

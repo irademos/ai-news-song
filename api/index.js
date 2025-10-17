@@ -184,7 +184,7 @@ app.get('/api/firebase-config', (_req, res) => {
 });
 
 app.get('/api/news-headlines', async (req, res) => {
-  const limit = 50;//Math.max(1, Math.min(20, Number.parseInt(req.query.limit, 10) || 8));
+  const limit = 120;//Math.max(1, Math.min(20, Number.parseInt(req.query.limit, 10) || 8));
 
   try {
     const stories = await fetchTopNews(limit);
