@@ -145,6 +145,17 @@
       background: rgba(15, 23, 42, 0.55);
     }
 
+    .headline-list button.back-button {
+      border-color: rgba(148, 163, 184, 0.35);
+      background: rgba(15, 23, 42, 0.35);
+    }
+
+    .headline-list button.back-button .song-title {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
     .headline-list button.active,
     .song-list button.active {
       border-color: var(--accent);
@@ -370,6 +381,15 @@
     </li>
   </template>
 
+  <template id="headlineSourceTemplate">
+    <li>
+      <button type="button" data-role="headline-source">
+        <span class="song-title"></span>
+        <span class="song-meta"></span>
+      </button>
+    </li>
+  </template>
+
   <template id="songItemTemplate">
     <li>
       <button type="button" data-role="song-item">
@@ -410,6 +430,9 @@
     let latestArticleContent = '';
     let isGenerating = false;
     let latestSummary = '';
+    let headlineViewMode = 'sources';
+    let groupedHeadlines = new Map();
+    let selectedHeadlineSource = null;
     let generateSongButton = null;
 
     const PROXYABLE_AUDIO_HOSTS = [
@@ -574,18 +597,80 @@
       status.textContent = message || '';
     }
 
-    function renderHeadlineList(stories) {
-      headlinesCache = stories;
+    function groupHeadlinesBySource(stories) {
+      const map = new Map();
+      stories.forEach((story) => {
+        const source = (story.source || 'Latest Headlines').trim();
+        if (!map.has(source)) {
+          map.set(source, []);
+        }
+        map.get(source).push(story);
+      });
+      return map;
+    }
+
+    function renderHeadlineSources() {
       const list = document.getElementById('headlineList');
-      const template = document.getElementById('headlineItemTemplate');
+      const template = document.getElementById('headlineSourceTemplate');
       if (!list || !template) return;
 
-      if (!stories.length) {
+      const entries = Array.from(groupedHeadlines.entries()).filter(([, stories]) => stories.length);
+
+      if (!entries.length) {
         showListEmptyState('headlineList', 'No fresh headlines were found. Try again later.');
         return;
       }
 
       list.innerHTML = '';
+
+      entries.forEach(([source, stories]) => {
+        const clone = template.content.cloneNode(true);
+        const button = clone.querySelector('button');
+        const title = clone.querySelector('.song-title');
+        const meta = clone.querySelector('.song-meta');
+
+        if (title) title.textContent = source;
+        if (meta) meta.textContent = `${stories.length} headline${stories.length === 1 ? '' : 's'}`;
+
+        if (button) {
+          button.classList.toggle('active', source === selectedHeadlineSource);
+          button.addEventListener('click', () => {
+            showHeadlinesForSource(source);
+          });
+        }
+
+        list.appendChild(clone);
+      });
+    }
+
+    function renderHeadlineStories(stories) {
+      const list = document.getElementById('headlineList');
+      const template = document.getElementById('headlineItemTemplate');
+      if (!list || !template) return;
+
+      list.innerHTML = '';
+
+      const backItem = document.createElement('li');
+      const backButton = document.createElement('button');
+      backButton.type = 'button';
+      backButton.dataset.role = 'headline-back';
+      backButton.classList.add('back-button');
+      backButton.innerHTML =
+        '<span class="song-title">← Back to sources</span><span class="song-meta">Choose another news outlet</span>';
+      backButton.setAttribute('aria-label', 'Back to news sources');
+      backButton.addEventListener('click', () => {
+        showHeadlineSources();
+      });
+      backItem.appendChild(backButton);
+      list.appendChild(backItem);
+
+      if (!stories.length) {
+        const empty = document.createElement('li');
+        empty.className = 'empty-state';
+        empty.textContent = 'No fresh headlines were found for this source.';
+        list.appendChild(empty);
+        return;
+      }
 
       stories.forEach((story) => {
         const clone = template.content.cloneNode(true);
@@ -597,17 +682,54 @@
         const preview = (story.summary || '').trim();
         const truncatedPreview = preview.length > 140 ? `${preview.slice(0, 140).trimEnd()}…` : preview;
 
-        title.textContent = story.headline || 'Untitled story';
-        meta.textContent = [story.source, truncatedPreview].filter(Boolean).join(' • ');
+        if (title) title.textContent = story.headline || 'Untitled story';
+        if (meta) meta.textContent = [story.source, truncatedPreview].filter(Boolean).join(' • ');
 
-        button.dataset.id = key;
-        button.classList.toggle('active', key === currentHeadlineKey);
-        button.addEventListener('click', () => {
-          handleHeadlineSelection({ ...story, key });
-        });
+        if (button) {
+          button.dataset.id = key;
+          button.classList.toggle('active', key === currentHeadlineKey);
+          button.addEventListener('click', () => {
+            handleHeadlineSelection({ ...story, key });
+          });
+        }
 
         list.appendChild(clone);
       });
+    }
+
+    function refreshHeadlineView() {
+      if (headlineViewMode === 'sources') {
+        renderHeadlineSources();
+        return;
+      }
+
+      if (selectedHeadlineSource) {
+        const stories = groupedHeadlines.get(selectedHeadlineSource) || [];
+        renderHeadlineStories(stories);
+      }
+    }
+
+    function showHeadlineSources() {
+      headlineViewMode = 'sources';
+      refreshHeadlineView();
+      updateStatus('Select a news source to browse its latest headlines.');
+    }
+
+    function showHeadlinesForSource(source) {
+      selectedHeadlineSource = source;
+      headlineViewMode = 'stories';
+      refreshHeadlineView();
+      updateStatus('Pick a headline to read the story and optionally generate a Suno track.');
+    }
+
+    function setHeadlines(stories) {
+      headlinesCache = stories;
+      groupedHeadlines = groupHeadlinesBySource(headlinesCache);
+      selectedHeadlineSource = null;
+      currentHeadlineKey = null;
+      selectedStory = null;
+      resetNowPlaying();
+      showHeadlineSources();
     }
 
     function handleHeadlineSelection(story) {
@@ -622,10 +744,12 @@
       }
 
       currentHeadlineKey = story.key;
+      selectedHeadlineSource = (story.source || 'Latest Headlines').trim();
+      headlineViewMode = 'stories';
       selectedStory = story;
       latestArticleContent = '';
       latestSummary = '';
-      renderHeadlineList(headlinesCache);
+      refreshHeadlineView();
 
       const title = document.getElementById('songTitle');
       const meta = document.getElementById('songMeta');
@@ -841,7 +965,7 @@
         }
       } finally {
         isGenerating = false;
-        renderHeadlineList(headlinesCache);
+        refreshHeadlineView();
         if (
           selectedStory &&
           selectedStory.key === story.key &&
@@ -1112,8 +1236,7 @@
           return;
         }
 
-        renderHeadlineList(stories);
-        updateStatus('Select a headline to read the article and optionally generate a Suno track.');
+        setHeadlines(stories);
       } catch (error) {
         console.error('Unable to load headlines:', error);
         showListEmptyState('headlineList', 'We could not load the latest headlines. Please try again later.');
