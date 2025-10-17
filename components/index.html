@@ -47,6 +47,11 @@
     }
 
     @media (max-width: 860px) {
+      .mobile-now-playing { height: var(--mobile-now-playing-height); }
+      .mobile-bottom-nav  { height: var(--mobile-nav-height); }
+    }
+
+    @media (max-width: 860px) {
       body {
         padding: 0;
         align-items: stretch;
@@ -93,24 +98,36 @@
       }
 
       .player-panel {
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: calc(var(--mobile-nav-height) + var(--mobile-now-playing-height) + 1.25rem);
-        margin: 0 1rem;
-        transform: translateY(calc(100% + 2rem));
-        transition: transform 0.35s ease;
-        max-height: calc(100vh - 9rem);
-        overflow: hidden;
+        display: none;              /* collapse space when closed */
+        position: static;
+        transform: none;
+        max-height: none;
+        overflow: visible;
+        margin: 0;
+        pointer-events: none;
+        visibility: hidden;
       }
 
       body.mobile-player-open .player-panel {
+        display: flex;              /* restore layout when open */
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: calc(var(--mobile-nav-height) + var(--mobile-now-playing-height) + 0.75rem);
+        margin: 0 1rem;
         transform: translateY(0);
+        max-height: calc(100vh - (var(--mobile-nav-height) + var(--mobile-now-playing-height) + 4rem));
+        overflow: hidden;
+        z-index: 40;
+        pointer-events: auto;
+        visibility: visible;
       }
 
       body.mobile-player-open .mobile-now-playing__chevron {
         transform: rotate(0deg);
       }
+
+      body.mobile-player-open { overflow: hidden; }
 
       .mobile-bottom-bar {
         display: flex;
@@ -133,19 +150,18 @@
         display: flex;
       }
 
-      .mobile-player-scrim {
-        display: none;
-      }
+      .mobile-player-scrim { z-index: 35; }
+      .mobile-bottom-bar  { z-index: 50; }
 
       body.mobile-player-open .mobile-player-scrim {
         display: block;
       }
-
-      .mobile-bottom-bar {
-        padding-left: max(1.25rem, env(safe-area-inset-left));
-        padding-right: max(1.25rem, env(safe-area-inset-right));
-      }
     }
+
+    @media (max-width: 860px) {
+      body.mobile-player-open .player-panel { transition: transform 0.35s ease, opacity 0.2s ease; }
+    }
+
 
     h1, h2, h3, p {
       margin: 0;
@@ -988,13 +1004,11 @@
       const shouldOpen = typeof force === 'boolean' ? force : !body.classList.contains('mobile-player-open');
       body.classList.toggle('mobile-player-open', shouldOpen);
 
-      if (toggle) {
-        toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
-      }
+      if (toggle) toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+      if (scrim)  scrim.hidden = !shouldOpen;
 
-      if (scrim) {
-        scrim.hidden = !shouldOpen;
-      }
+      // ensure off state can't eat taps (paired with CSS pointer-events)
+      document.querySelector('.player-panel')?.setAttribute('aria-hidden', shouldOpen ? 'false' : 'true');
     }
 
     function resetNowPlaying() {
