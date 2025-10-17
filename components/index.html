@@ -53,6 +53,14 @@
         grid-template-columns: 1fr;
         padding: 1.5rem;
       }
+
+      .song-list button {
+        grid-template-columns: 64px 1fr;
+      }
+
+      .song-thumb {
+        width: 64px;
+      }
     }
 
     h1, h2, h3, p {
@@ -119,9 +127,15 @@
       text-align: left;
       cursor: pointer;
       transition: transform 0.15s ease, border-color 0.2s ease, background 0.2s ease;
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
       gap: 0.35rem;
+    }
+
+    .song-list button {
+      grid-template-columns: 72px 1fr;
+      align-items: center;
+      gap: 0.75rem;
     }
 
     .headline-list button:hover,
@@ -148,6 +162,54 @@
       display: flex;
       gap: 0.5rem;
       align-items: baseline;
+    }
+
+    .song-thumb {
+      position: relative;
+      width: 72px;
+      aspect-ratio: 1 / 1;
+      border-radius: 16px;
+      overflow: hidden;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(96, 165, 250, 0.25));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(226, 232, 240, 0.85);
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .song-thumb img {
+      display: none;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .song-thumb.has-image img {
+      display: block;
+    }
+
+    .song-thumb.has-image .song-thumb-placeholder {
+      display: none;
+    }
+
+    .song-thumb-placeholder {
+      pointer-events: none;
+    }
+
+    .song-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+
+    .song-info .song-title,
+    .song-info .song-meta {
+      display: block;
     }
 
     .player-panel {
@@ -311,8 +373,14 @@
   <template id="songItemTemplate">
     <li>
       <button type="button" data-role="song-item">
-        <span class="song-title"></span>
-        <span class="song-meta"></span>
+        <div class="song-thumb" aria-hidden="true">
+          <img loading="lazy" decoding="async" alt="" />
+          <span class="song-thumb-placeholder">AI</span>
+        </div>
+        <div class="song-info">
+          <span class="song-title"></span>
+          <span class="song-meta"></span>
+        </div>
       </button>
     </li>
   </template>
@@ -383,6 +451,25 @@
 
     function sanitizeAudioUrl(value, options) {
       return normalizeSunoAudioUrl(value, options);
+    }
+
+    function sanitizeImageUrl(value) {
+      if (typeof value !== 'string') return '';
+
+      const trimmed = value.trim();
+      if (!trimmed) return '';
+      if (trimmed.startsWith('/')) return trimmed;
+      if (trimmed.startsWith('data:image/')) return trimmed;
+
+      try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+          return '';
+        }
+        return parsed.toString();
+      } catch {
+        return '';
+      }
     }
 
     function isMigratingAudioHost(url) {
@@ -680,7 +767,18 @@
 
         const createdAt = clip.created_at ? new Date(clip.created_at) : new Date();
         const streamUrl = typeof clip.audio_url === 'string' ? sanitizeAudioUrl(clip.audio_url) : '';
+        const imageUrl = sanitizeImageUrl(clip.image_url || '');
         const summaryText = (latestSummary || body.prompt || '').trim();
+        const normalizedTaskIds = Array.from(
+          new Set(
+            [
+              ...taskIds
+                .map((value) => (typeof value === 'string' ? value.trim() : ''))
+                .filter(Boolean),
+              typeof clip.task_id === 'string' ? clip.task_id.trim() : '',
+            ].filter(Boolean),
+          ),
+        );
         const songRecord = {
           id: clip.id || null,
           audioUrl: streamUrl,
@@ -693,6 +791,9 @@
           prompt: summaryText,
           createdAt,
           generatedAtIso: createdAt.toISOString(),
+          imageUrl,
+          taskIds: normalizedTaskIds,
+          primaryTaskId: normalizedTaskIds[0] || '',
           articleHeadline: story.headline || '',
           articleSummary: story.summary || '',
           articleSource: story.source || '',
@@ -797,6 +898,9 @@
         const button = clone.querySelector('button');
         const title = clone.querySelector('.song-title');
         const meta = clone.querySelector('.song-meta');
+        const thumb = clone.querySelector('.song-thumb');
+        const thumbImg = thumb ? thumb.querySelector('img') : null;
+        const thumbPlaceholder = thumb ? thumb.querySelector('.song-thumb-placeholder') : null;
 
         const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
         title.textContent = displayTitle;
@@ -806,6 +910,24 @@
         const createdAt = formatDateTime(song.createdAt);
         if (createdAt) metaPieces.push(createdAt);
         meta.textContent = metaPieces.filter(Boolean).join(' • ');
+
+        if (thumb) {
+          const sanitizedThumbUrl = sanitizeImageUrl(song.imageUrl || song.image_url || '');
+          const placeholderText = (displayTitle || 'AI').trim().slice(0, 2).toUpperCase();
+          if (thumbPlaceholder) {
+            thumbPlaceholder.textContent = placeholderText || 'AI';
+          }
+
+          if (thumbImg) {
+            if (sanitizedThumbUrl) {
+              thumbImg.src = sanitizedThumbUrl;
+              thumb.classList.add('has-image');
+            } else {
+              thumbImg.removeAttribute('src');
+              thumb.classList.remove('has-image');
+            }
+          }
+        }
 
         button.dataset.id = song.id || '';
         button.classList.toggle('active', Boolean(song.id && song.id === currentSongId));
@@ -907,6 +1029,15 @@
 
               const rawAudioUrl = sanitizeAudioUrl(data.audioUrl);
               const rawStreamUrl = sanitizeAudioUrl(data.streamUrl);
+              const rawImageUrl = sanitizeImageUrl(data.imageUrl || data.image_url || '');
+              const storedTaskIds = Array.isArray(data.taskIds)
+                ? data.taskIds
+                    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+                    .filter(Boolean)
+                : [];
+              const primaryTaskId = typeof data.primaryTaskId === 'string'
+                ? data.primaryTaskId.trim()
+                : storedTaskIds[0] || '';
 
               return {
                 id: doc.id,
@@ -917,6 +1048,7 @@
                 lyrics: data.lyrics || data.prompt || '',
                 audioUrl: rawAudioUrl || rawStreamUrl,
                 streamUrl: rawStreamUrl,
+                imageUrl: rawImageUrl,
                 createdAt,
                 prompt: data.prompt || '',
                 articleHeadline: data.articleHeadline || '',
@@ -924,6 +1056,8 @@
                 articleSource: data.articleSource || '',
                 articleUrl: data.articleUrl || '',
                 articleContent: data.articleContent || '',
+                taskIds: storedTaskIds,
+                primaryTaskId,
               };
             })
             .filter((song) => Boolean(song.audioUrl));
@@ -1095,6 +1229,19 @@
       const generatedIso = song.generatedAtIso || (song.createdAt instanceof Date
         ? song.createdAt.toISOString()
         : new Date().toISOString());
+      const sanitizedImageUrl = sanitizeImageUrl(song?.imageUrl || '');
+      const normalizedTaskIds = Array.isArray(song?.taskIds)
+        ? Array.from(
+            new Set(
+              song.taskIds
+                .map((value) => (typeof value === 'string' ? value.trim() : ''))
+                .filter(Boolean),
+            ),
+          )
+        : [];
+      const primaryTaskId = typeof song?.primaryTaskId === 'string'
+        ? song.primaryTaskId.trim()
+        : normalizedTaskIds[0] || '';
 
       const payload = {
         sunoTitle: song.sunoTitle || song.title || 'Daily Spin (Suno)',
@@ -1102,12 +1249,15 @@
         lyrics: (song.lyrics || '').trim(),
         audioUrl: persistedAudioUrl,
         streamUrl: sanitizedStreamUrl,
+        imageUrl: sanitizedImageUrl,
         prompt: song.prompt || '',
         articleHeadline: song.articleHeadline || '',
         articleSummary: song.articleSummary || '',
         articleSource: song.articleSource || '',
         articleUrl: song.articleUrl || '',
         articleContent: song.articleContent || '',
+        taskIds: normalizedTaskIds,
+        primaryTaskId,
         createdAt: serverTimestamp(),
         generatedAtIso: generatedIso,
       };
@@ -1131,14 +1281,32 @@
         );
 
         const finalUrl = sanitizeAudioUrl(finalClip?.audio_url || '');
-        if (!finalUrl || finalUrl === streamUrl) {
+        const finalImageUrl = sanitizeImageUrl(finalClip?.image_url || '');
+        if ((!finalUrl || finalUrl === streamUrl) && !finalImageUrl) {
           return;
         }
 
-        await updateDoc(docRef, { audioUrl: finalUrl });
+        const updatePayload = {};
+        if (finalUrl && finalUrl !== streamUrl) {
+          updatePayload.audioUrl = finalUrl;
+        }
+        if (finalImageUrl) {
+          updatePayload.imageUrl = finalImageUrl;
+        }
+
+        if (Object.keys(updatePayload).length === 0) {
+          return;
+        }
+
+        await updateDoc(docRef, updatePayload);
 
         if (songRecord) {
-          songRecord.audioUrl = finalUrl;
+          if (finalUrl && finalUrl !== streamUrl) {
+            songRecord.audioUrl = finalUrl;
+          }
+          if (finalImageUrl) {
+            songRecord.imageUrl = finalImageUrl;
+          }
         }
       } catch (error) {
         const fallbackClip = await pollForAudioIds(
@@ -1151,14 +1319,28 @@
         }
 
         const migratedUrl = sanitizeAudioUrl(fallbackClip.audio_url || '', { migrateHost: true });
-        if (!migratedUrl || migratedUrl === streamUrl) {
+        const migratedImageUrl = sanitizeImageUrl(fallbackClip.image_url || '');
+        if ((!migratedUrl || migratedUrl === streamUrl) && !migratedImageUrl) {
           throw error;
         }
 
-        await updateDoc(docRef, { audioUrl: migratedUrl });
+        const updatePayload = {};
+        if (migratedUrl && migratedUrl !== streamUrl) {
+          updatePayload.audioUrl = migratedUrl;
+        }
+        if (migratedImageUrl) {
+          updatePayload.imageUrl = migratedImageUrl;
+        }
+
+        await updateDoc(docRef, updatePayload);
 
         if (songRecord) {
-          songRecord.audioUrl = migratedUrl;
+          if (migratedUrl && migratedUrl !== streamUrl) {
+            songRecord.audioUrl = migratedUrl;
+          }
+          if (migratedImageUrl) {
+            songRecord.imageUrl = migratedImageUrl;
+          }
         }
       }
     }
