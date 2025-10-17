@@ -2,616 +2,335 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Daily Spin</title>
+
   <style>
-    :root {
+    /* =========================
+       Design Tokens / Reset
+    ========================== */
+    :root{
       color-scheme: light dark;
-      --bg: #0d1117;
-      --surface: #161b22;
-      --surface-alt: #1f2933;
-      --accent: #f59e0b;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --mobile-nav-height: 64px;
-      --mobile-now-playing-height: 88px;
-      font-family: "Inter", "Segoe UI", Roboto, system-ui, -apple-system, sans-serif;
+      --bg:#0d1117;
+      --surface:#161b22;
+      --surface-alt:#1f2933;
+      --accent:#f59e0b;
+      --text:#f8fafc;
+      --muted:#94a3b8;
+      --mobile-nav-height:64px;
+      --mobile-audio-height: 56px;
+      font-family:"Inter","Segoe UI",Roboto,system-ui,-apple-system,sans-serif;
+    }
+    *{ box-sizing:border-box }
+    h1,h2,h3,p{ margin:0 }
+    body{
+      margin:0;
+      min-height:100vh;
+      display:flex;
+      justify-content:center;
+      align-items:stretch;
+      padding:2rem;
+      color:var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(245,158,11,.08), transparent 45%),
+        var(--bg);
     }
 
-    * {
+    /* =========================
+       App Layout (Desktop-first)
+    ========================== */
+    .app-shell{
+      width:min(1080px,100%);
+      display:grid;
+      grid-template-columns:minmax(240px,280px) minmax(320px,640px);
+      gap:2rem;
+      padding:2rem;
+      border-radius:28px;
+      background:rgba(15,23,42,.7);
+      backdrop-filter:blur(24px);
+      box-shadow:0 24px 60px rgba(15,23,42,.4);
+      position:relative;
+      z-index:40; /* keep above mobile scrim by default */
+      min-height: 90vh;     /* always at least full viewport height */
+      height: 90dvh;        /* modern browsers: dynamic viewport height */
       box-sizing: border-box;
     }
 
-    body {
-      margin: 0;
-      background: radial-gradient(circle at top left, rgba(245, 158, 11, 0.08), transparent 45%),
-        var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: stretch;
-      padding: 2rem;
+    .sidebar{
+      display:flex;
+      flex-direction:column;
+      gap:2rem;
     }
 
-    .app-shell {
-      display: grid;
-      grid-template-columns: minmax(240px, 280px) minmax(320px, 640px);
-      gap: 2rem;
-      width: min(1080px, 100%);
-      background: rgba(15, 23, 42, 0.7);
-      backdrop-filter: blur(24px);
-      border-radius: 28px;
-      padding: 2rem;
-      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.4);
+    .sidebar-section{
+      display:flex;
+      flex-direction:column;
+      gap:1rem;
+      max-height:50vh;
     }
-
-    @media (max-width: 860px) {
-      .mobile-now-playing { height: var(--mobile-now-playing-height); }
-      .mobile-bottom-nav  { height: var(--mobile-nav-height); }
+    .sidebar-section header{
+      display:flex;
+      flex-direction:column;
+      gap:.35rem;
     }
-
-    @media (max-width: 860px) {
-      body {
-        padding: 0;
-        align-items: stretch;
-      }
-
-      .app-shell {
-        grid-template-columns: 1fr;
-        padding: 1.25rem 1.25rem calc(var(--mobile-nav-height) + var(--mobile-now-playing-height) + 3rem);
-        gap: 1.5rem;
-        width: 100%;
-        border-radius: 0;
-        min-height: 100vh;
-      }
-
-      .sidebar {
-        gap: 1.5rem;
-        order: 2;
-      }
-
-      .sidebar-section {
-        max-height: none;
-        padding-bottom: 1rem;
-      }
-
-      .sidebar-section:not(.active) {
-        display: none;
-      }
-
-      .sidebar-section.active {
-        display: flex;
-      }
-
-      .headline-list,
-      .song-list {
-        max-height: none;
-      }
-
-      .song-list button {
-        grid-template-columns: 64px 1fr;
-      }
-
-      .song-thumb {
-        width: 64px;
-      }
-
-      .player-panel {
-        display: none;              /* collapse space when closed */
-        position: static;
-        transform: none;
-        max-height: none;
-        overflow: visible;
-        margin: 0;
-        pointer-events: none;
-        visibility: hidden;
-      }
-
-      body.mobile-player-open .player-panel {
-        display: flex;              /* restore layout when open */
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: calc(var(--mobile-nav-height) + var(--mobile-now-playing-height) + 0.75rem);
-        margin: 0 1rem;
-        transform: translateY(0);
-        max-height: calc(100vh - (var(--mobile-nav-height) + var(--mobile-now-playing-height) + 4rem));
-        overflow: hidden;
-        z-index: 40;
-        pointer-events: auto;
-        visibility: visible;
-      }
-
-      body.mobile-player-open .mobile-now-playing__chevron {
-        transform: rotate(0deg);
-      }
-
-      body.mobile-player-open { overflow: hidden; }
-
-      .mobile-bottom-bar {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        padding: 0.75rem 1.25rem max(0.75rem, env(safe-area-inset-bottom));
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0), rgba(15, 23, 42, 0.95));
-        z-index: 30;
-      }
-
-      .mobile-now-playing {
-        display: flex;
-      }
-
-      .mobile-bottom-nav {
-        display: flex;
-      }
-
-      .mobile-player-scrim { z-index: 35; }
-      .mobile-bottom-bar  { z-index: 50; }
-
-      body.mobile-player-open .mobile-player-scrim {
-        display: block;
-      }
+    .sidebar-section h2{
+      font-size:1.25rem;
+      font-weight:600;
+      letter-spacing:.01em;
     }
+    .sidebar-section p{ font-size:.9rem; color:var(--muted) }
 
-    @media (max-width: 860px) {
-      body.mobile-player-open .player-panel { transition: transform 0.35s ease, opacity 0.2s ease; }
+    /* Lists */
+    .headline-list,.song-list{
+      list-style:none;
+      margin:0; padding:0;
+      display:flex; flex-direction:column; gap:.75rem;
+      overflow-y:auto;
     }
+    .headline-list{ max-height:30vh }
+    .song-list{ max-height:30vh }
 
-
-    h1, h2, h3, p {
-      margin: 0;
-    }
-
-    .sidebar {
-      display: flex;
-      flex-direction: column;
-      gap: 2rem;
-    }
-
-    .sidebar-section {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-      max-height: 50vh;
-    }
-
-    .sidebar-section header {
-      display: flex;
-      flex-direction: column;
-      gap: 0.35rem;
-    }
-
-    .sidebar-section header h2 {
-      font-size: 1.25rem;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-    }
-
-    .sidebar-section header p {
-      font-size: 0.9rem;
-      color: var(--muted);
-    }
-
-    .headline-list,
-    .song-list {
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-      list-style: none;
-      padding: 0;
-      margin: 0;
-      overflow-y: auto;
-    }
-
-    .headline-list {
-      max-height: 52vh;
-    }
-
-    .song-list {
-      max-height: 44vh;
-    }
-
+    /* List Items */
     .headline-list button,
-    .song-list button {
-      width: 100%;
-      background: transparent;
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      color: inherit;
-      padding: 0.9rem 1rem;
-      border-radius: 14px;
-      text-align: left;
-      cursor: pointer;
-      transition: transform 0.15s ease, border-color 0.2s ease, background 0.2s ease;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0.35rem;
+    .song-list button{
+      width:100%;
+      display:grid;
+      gap:.35rem;
+      grid-template-columns:minmax(0,1fr);
+      background:transparent;
+      color:inherit;
+      border:1px solid rgba(148,163,184,.2);
+      border-radius:14px;
+      padding:.9rem 1rem;
+      text-align:left;
+      cursor:pointer;
+      transition:transform .15s ease, border-color .2s ease, background .2s ease;
     }
-
-    .song-list button {
-      grid-template-columns: 72px 1fr;
-      align-items: center;
-      gap: 0.75rem;
+    .song-list button{
+      grid-template-columns:72px 1fr;
+      align-items:center;
+      gap:.75rem;
     }
-
     .headline-list button:hover,
-    .song-list button:hover {
-      transform: translateY(-2px);
-      border-color: rgba(245, 158, 11, 0.5);
-      background: rgba(15, 23, 42, 0.55);
+    .song-list button:hover{
+      transform:translateY(-2px);
+      border-color:rgba(245,158,11,.5);
+      background:rgba(15,23,42,.55);
     }
-
-    .headline-list button.back-button {
-      border-color: rgba(148, 163, 184, 0.35);
-      background: rgba(15, 23, 42, 0.35);
+    .headline-list .back-button{
+      border-color:rgba(148,163,184,.35);
+      background:rgba(15,23,42,.35);
     }
-
-    .headline-list button.back-button .song-title {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
+    .headline-list .back-button .song-title{
+      display:flex; align-items:center; gap:.5rem;
     }
-
     .headline-list button.active,
-    .song-list button.active {
-      border-color: var(--accent);
-      background: rgba(245, 158, 11, 0.12);
+    .song-list button.active{
+      border-color:var(--accent);
+      background:rgba(245,158,11,.12);
+    }
+    .song-title{ font-weight:600; font-size:1rem }
+    .song-meta{ font-size:.85rem; color:var(--muted); display:flex; gap:.5rem; align-items:baseline }
+
+    /* Thumbs */
+    .song-thumb{
+      position:relative;
+      width:72px; aspect-ratio:1/1;
+      border-radius:16px; overflow:hidden;
+      background:linear-gradient(135deg, rgba(245,158,11,.25), rgba(96,165,250,.25));
+      display:flex; align-items:center; justify-content:center;
+      color:rgba(226,232,240,.85);
+      font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; font-weight:600;
+    }
+    .song-thumb img{ display:none; width:100%; height:100%; object-fit:cover }
+    .song-thumb.has-image img{ display:block }
+    .song-thumb.has-image .song-thumb-placeholder{ display:none }
+    .song-thumb-placeholder{ pointer-events:none }
+    .song-info{ display:flex; flex-direction:column; gap:.35rem; min-width:0 }
+
+    /* Player Panel */
+    .player-panel{
+      position:relative;
+      display:flex; flex-direction:column; gap:1.5rem;
+      padding:2rem; border-radius:24px; z-index:2;
+      background:linear-gradient(145deg, rgb(15,23,42), rgb(17,24,39));
+      box-shadow:inset 0 1px 0 rgba(148,163,184,.07);
+      justify-content: flex-start;
+      height: 88%;           /* fills parent grid cell */
+      max-height: 100%;       /* prevents overflow */
+      overflow-y: auto;       /* scrolls internally if content exceeds viewport */
+      box-sizing: border-box; /* include padding in height calc */
+    }
+    .player-header{ display:flex; flex-direction:column; gap:.6rem }
+    .player-header h1{ font-size:clamp(2rem,4vw,2.8rem); font-weight:700; letter-spacing:-.02em }
+    .player-header p{ color:var(--muted); font-size:1rem; line-height:1.6 }
+    .player-header .tag{
+      display:inline-flex; align-items:center; gap:.5rem;
+      padding:.35rem .85rem; border-radius:999px;
+      background:rgba(245,158,11,.18); color:var(--accent);
+      font-size:.85rem; font-weight:600; text-transform:uppercase; letter-spacing:.08em;
     }
 
-    .song-title {
-      font-weight: 600;
-      font-size: 1rem;
+    audio{
+      width:100%; height:54px; border-radius:12px;
+      background:rgba(15,23,42,.6);
     }
 
-    .song-meta {
-      font-size: 0.85rem;
-      color: var(--muted);
-      display: flex;
-      gap: 0.5rem;
-      align-items: baseline;
+    /* Tabs */
+    .player-tabs{
+      display:inline-flex; gap:.25rem; padding:.35rem;
+      background:rgba(148,163,184,.15); border-radius:999px; align-self:flex-start;
+    }
+    .player-tab{
+      background:transparent; border:none; cursor:pointer;
+      color:var(--muted); font-weight:600; letter-spacing:.01em;
+      padding:.4rem .95rem; border-radius:999px;
+      transition:background .2s ease, color .2s ease;
+    }
+    .player-tab.active{
+      background:rgba(15,23,42,.8); color:var(--text);
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
     }
 
-    .song-thumb {
-      position: relative;
-      width: 72px;
-      aspect-ratio: 1 / 1;
-      border-radius: 16px;
-      overflow: hidden;
-      background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(96, 165, 250, 0.25));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: rgba(226, 232, 240, 0.85);
-      font-size: 0.7rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      font-weight: 600;
+    .tab-panels{
+      display:flex; flex-direction:column; gap:.75rem;
+      padding:1.25rem 1.5rem; border-radius:18px;
+      background:rgba(15,23,42,.55);
+      max-height:260px; overflow:hidden;
     }
+    .tab-panel{
+      flex:1; padding-right:.75rem;
+      font-size:.95rem; line-height:1.7;
+      color:rgba(226,232,240,.9);
+      white-space:pre-wrap; overflow-y:auto;
+    }
+    .tab-panel[hidden]{ display:none }
 
-    .song-thumb img {
-      display: none;
+    /* Empty / Actions */
+    .empty-state{ color:var(--muted); text-align:center; padding:2rem }
+    .generate-song{
+      margin-top:auto; padding-top:1.25rem; display:flex; flex-direction:column; gap:.75rem;
+      border-top:1px solid rgba(148,163,184,.15);
+    }
+    .generate-song-status{ font-size:.9rem; color:var(--muted); min-height:1.4em }
+    .generate-song button{
+      align-self:flex-start; cursor:pointer;
+      background:var(--accent); color:#0b0f16; border:none;
+      padding:.75rem 1.5rem; border-radius:999px; font-weight:600; letter-spacing:.02em;
+      transition:transform .15s ease, box-shadow .2s ease;
+    }
+    .generate-song button:hover:not(:disabled){ transform:translateY(-1px); box-shadow:0 10px 30px rgba(245,158,11,.35) }
+    .generate-song button:disabled{ opacity:.6; cursor:not-allowed; box-shadow:none }
+
+    /* Desktop/tablet: show in right column under the player panel */
+    #dockedAudio {
+      grid-column: 2;            /* sit under <main class="player-panel"> */
+      align-self: end;
       width: 100%;
-      height: 100%;
-      object-fit: cover;
     }
-
-    .song-thumb.has-image img {
-      display: block;
-    }
-
-    .song-thumb.has-image .song-thumb-placeholder {
-      display: none;
-    }
-
-    .song-thumb-placeholder {
-      pointer-events: none;
-    }
-
-    .song-info {
-      display: flex;
-      flex-direction: column;
-      gap: 0.35rem;
-      min-width: 0;
-    }
-
-    .song-info .song-title,
-    .song-info .song-meta {
-      display: block;
-    }
-
-    .player-panel {
-      background: linear-gradient(145deg, rgba(15, 23, 42, 0.92), rgba(17, 24, 39, 0.85));
-      border-radius: 24px;
-      padding: 2rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1.5rem;
-      justify-content: space-between;
-      box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.07);
-      position: relative;
-      z-index: 2;
-    }
-
-    .player-header {
-      display: flex;
-      flex-direction: column;
-      gap: 0.6rem;
-    }
-
-    .player-header h1 {
-      font-size: clamp(2rem, 4vw, 2.8rem);
-      font-weight: 700;
-      letter-spacing: -0.02em;
-    }
-
-    .player-header p {
-      color: var(--muted);
-      font-size: 1rem;
-      line-height: 1.6;
-    }
-
-    .player-header .tag {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.35rem 0.85rem;
-      background: rgba(245, 158, 11, 0.18);
-      color: var(--accent);
-      border-radius: 999px;
-      font-size: 0.85rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      font-weight: 600;
-    }
-
-    audio {
+    #dockedAudio audio {
       width: 100%;
+      height: 54px;              /* your existing height */
       border-radius: 12px;
-      height: 54px;
       background: rgba(15, 23, 42, 0.6);
+      display: block;
     }
 
-    .player-tabs {
-      display: inline-flex;
-      gap: 0.25rem;
-      padding: 0.35rem;
-      background: rgba(148, 163, 184, 0.15);
-      border-radius: 999px;
-      align-self: flex-start;
-    }
+    /* Hide when no audio */
+    body:not(.has-audio) #dockedAudio { display: none; }
 
-    .player-tab {
-      background: transparent;
-      border: none;
-      color: var(--muted);
-      padding: 0.4rem 0.95rem;
-      border-radius: 999px;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-      cursor: pointer;
-      transition: background 0.2s ease, color 0.2s ease;
-    }
+    /* ===== Mobile (≤ 860px) ===== */
+    @media (max-width: 860px){
+      body{ padding:0; align-items:stretch; justify-content:flex-start }
 
-    .player-tab.active {
-      background: rgba(15, 23, 42, 0.8);
-      color: var(--text);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    }
+      .app-shell{
+        width:100%;
+        min-height:100vh;
+        border-radius:0;
+        grid-template-columns:1fr;
+        gap:1.5rem;
+        /* only bottom nav now */
+        padding: 1.25rem 1.25rem calc(var(--mobile-nav-height) + var(--mobile-audio-height) + 3rem);
+      }
 
-    .tab-panels {
-      background: rgba(15, 23, 42, 0.55);
-      border-radius: 18px;
-      padding: 1.25rem 1.5rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-      max-height: 260px;
-      overflow: hidden;
-    }
+      /* dock the audio player */
+      #dockedAudio{
+        position: fixed;
+        left: max(1rem, env(safe-area-inset-left));
+        right: max(1rem, env(safe-area-inset-right));
+        bottom: calc(var(--mobile-nav-height) + max(0.75rem, env(safe-area-inset-bottom)) + 0.5rem);
+        height: var(--mobile-audio-height);
+        z-index: 60; /* above nav (which is 50) */
+        border-radius: 14px;
+        background: rgba(15,23,42,.95);
+        border: 1px solid rgba(148,163,184,.15);
+        box-shadow: 0 -12px 28px rgba(15,23,42,.35);
+      }
 
-    .tab-panel {
-      font-size: 0.95rem;
-      line-height: 1.7;
-      color: rgba(226, 232, 240, 0.9);
-      white-space: pre-wrap;
-      overflow-y: auto;
-      padding-right: 0.75rem;
-      flex: 1;
-    }
+      /* when no audio, hide dock + shrink padding */
+      body:not(.has-audio) #dockedAudio{ display:none; }
+      body:not(.has-audio) .app-shell{
+        padding-bottom: calc(var(--mobile-nav-height) + 2.5rem);
+      }
 
-    .tab-panel[hidden] {
-      display: none;
-    }
+      /* “pages”: headlines, recent, player */
+      .sidebar-section,
+      .player-panel{
+        padding-bottom:1rem;
+      }
 
-    .mobile-bottom-bar,
-    .mobile-now-playing,
-    .mobile-bottom-nav,
-    .mobile-player-scrim {
-      display: none;
-    }
+      /* hide when not active */
+      .sidebar-section:not(.active),
+      .player-panel:not(.active){
+        display:none;
+      }
 
-    .mobile-now-playing {
-      width: 100%;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      padding: 0.75rem 1.25rem;
-      background: rgba(15, 23, 42, 0.92);
-      border: 1px solid rgba(148, 163, 184, 0.15);
-      box-shadow: 0 -18px 38px rgba(15, 23, 42, 0.35);
-      backdrop-filter: blur(18px);
-      color: var(--text);
-      border-radius: 18px;
-    }
+      /* show when active */
+      .sidebar-section.active,
+      .player-panel.active{
+        display:flex;
+      }
 
-    .mobile-now-playing__toggle {
-      background: none;
-      border: none;
-      color: inherit;
-      display: flex;
-      flex: 1;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      padding: 0;
-      cursor: pointer;
-      text-align: left;
-    }
+      /* keep previous list/thumb tweaks */
+      .headline-list,.song-list{ max-height:none }
+      .song-list button{ grid-template-columns:64px 1fr }
+      .song-thumb{ width:64px }
 
-    .mobile-now-playing__details {
-      display: flex;
-      flex-direction: column;
-      gap: 0.35rem;
-      overflow: hidden;
-    }
-
-    .mobile-now-playing__title {
-      font-weight: 600;
-      font-size: 1rem;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .mobile-now-playing__meta {
-      font-size: 0.85rem;
-      color: var(--muted);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .mobile-now-playing__chevron {
-      font-size: 1.1rem;
-      transform: rotate(180deg);
-      transition: transform 0.25s ease;
-    }
-
-    .mobile-now-playing__play {
-      width: 46px;
-      height: 46px;
-      border-radius: 50%;
-      border: none;
-      background: var(--accent);
-      color: #0b0f16;
-      font-weight: 700;
-      font-size: 1rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
-    }
-
-    .mobile-now-playing__play:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      box-shadow: none;
-    }
-
-    .mobile-now-playing__play:not(:disabled):hover {
-      transform: translateY(-1px);
-      box-shadow: 0 12px 30px rgba(245, 158, 11, 0.45);
-    }
-
-    .mobile-bottom-nav {
-      width: 100%;
-      align-items: center;
-      justify-content: center;
-      gap: 0.75rem;
-      background: rgba(15, 23, 42, 0.92);
-      border: 1px solid rgba(148, 163, 184, 0.15);
-      box-shadow: 0 -18px 38px rgba(15, 23, 42, 0.35);
-      backdrop-filter: blur(18px);
-      padding: 0.75rem;
-      border-radius: 18px;
-    }
-
-    .mobile-bottom-nav__button {
-      flex: 1;
-      background: rgba(148, 163, 184, 0.12);
-      border: none;
-      color: var(--muted);
-      padding: 0.75rem 1rem;
-      border-radius: 14px;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-      cursor: pointer;
-      transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
-    }
-
-    .mobile-bottom-nav__button.active {
-      background: rgba(245, 158, 11, 0.18);
-      color: var(--accent);
-      transform: translateY(-2px);
-    }
-
-    .mobile-player-scrim {
-      background: rgba(15, 23, 42, 0.6);
-      position: fixed;
-      inset: 0;
-      z-index: 15;
-    }
-
-    .empty-state {
-      color: var(--muted);
-      text-align: center;
-      padding: 2rem;
-    }
-
-    .generate-song {
-      margin-top: auto;
-      padding-top: 1.25rem;
-      border-top: 1px solid rgba(148, 163, 184, 0.15);
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-    }
-
-    .generate-song-status {
-      font-size: 0.9rem;
-      color: var(--muted);
-      min-height: 1.4em;
-    }
-
-    .generate-song button {
-      align-self: flex-start;
-      background: var(--accent);
-      color: #0b0f16;
-      border: none;
-      padding: 0.75rem 1.5rem;
-      border-radius: 999px;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.2s ease;
-    }
-
-    .generate-song button:hover:not(:disabled) {
-      transform: translateY(-1px);
-      box-shadow: 0 10px 30px rgba(245, 158, 11, 0.35);
-    }
-
-    .generate-song button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-      box-shadow: none;
+      /* bottom nav (same look, now standalone) */
+      .mobile-bottom-nav{
+        position:fixed; left:0; right:0; bottom:0;
+        height:var(--mobile-nav-height);
+        display:flex; align-items:center; justify-content:center; gap:.75rem;
+        padding:.75rem max(1rem, env(safe-area-inset-left)) max(.75rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-right));
+        border-radius:18px 18px 0 0;
+        background:rgba(15,23,42,.92);
+        border-top:1px solid rgba(148,163,184,.15);
+        box-shadow:0 -18px 38px rgba(15,23,42,.35);
+        z-index:50;
+      }
+      .mobile-bottom-nav__button{
+        flex:1; background:rgba(148,163,184,.12); border:none; color:var(--muted);
+        padding:.75rem 1rem; border-radius:14px; font-weight:600; letter-spacing:.01em; cursor:pointer;
+        transition:background .2s ease, color .2s ease, transform .2s ease;
+      }
+      .mobile-bottom-nav__button.active{
+        background:rgba(245,158,11,.18); color:var(--accent);
+        transform:translateY(-2px);
+      }
     }
   </style>
 </head>
+
 <body>
   <div class="app-shell">
+    <!-- Sidebar -->
     <aside class="sidebar">
       <section class="sidebar-section" data-section="headlines">
         <header>
           <h2>Top Headlines</h2>
           <p>Select a headline to read the story and optionally spin a new track.</p>
         </header>
-        <ul class="headline-list" id="headlineList"></ul>
+        <ul id="headlineList" class="headline-list"></ul>
       </section>
 
       <section class="sidebar-section" data-section="recent">
@@ -619,113 +338,61 @@
           <h2>Recent Spins</h2>
           <p>The latest Suno creations saved from Daily Spin.</p>
         </header>
-        <ul class="song-list" id="songList"></ul>
+        <ul id="songList" class="song-list"></ul>
       </section>
     </aside>
 
-    <main class="player-panel">
+    <!-- Player -->
+    <main class="player-panel" data-section="player" aria-hidden="false">
       <div class="player-header">
-        <span class="tag" id="songTag">Top Stories</span>
+        <span id="songTag" class="tag">Top Stories</span>
         <h1 id="songTitle">Choose a headline</h1>
         <p id="songMeta">Select a headline from the list to load the article.</p>
       </div>
 
-      <audio id="audioPlayer" controls preload="none">
-        <source id="audioSource" src="" type="audio/mpeg" />
-        Your browser does not support the audio element.
-      </audio>
-
       <div class="player-tabs" role="tablist" aria-label="Now playing content">
-        <button
-          type="button"
-          class="player-tab active"
-          id="articleTab"
-          data-role="player-tab"
-          data-tab="article"
-          role="tab"
-          aria-controls="songArticle"
-          aria-selected="true"
-        >
-          Article
-        </button>
-        <button
-          type="button"
-          class="player-tab"
-          id="lyricsTab"
-          data-role="player-tab"
-          data-tab="lyrics"
-          role="tab"
-          aria-controls="songLyrics"
-          aria-selected="false"
-        >
-          Lyrics
-        </button>
+        <button type="button" id="articleTab" class="player-tab active" data-role="player-tab" data-tab="article" role="tab" aria-controls="songArticle" aria-selected="true">Article</button>
+        <button type="button" id="lyricsTab" class="player-tab" data-role="player-tab" data-tab="lyrics" role="tab" aria-controls="songLyrics" aria-selected="false">Lyrics</button>
       </div>
 
       <div class="tab-panels">
-        <section
-          id="songArticle"
-          class="tab-panel"
-          data-role="tab-panel"
-          data-tab="article"
-          role="tabpanel"
-          aria-labelledby="articleTab"
-        >
+        <section id="songArticle" class="tab-panel" data-role="tab-panel" data-tab="article" role="tabpanel" aria-labelledby="articleTab">
           Article summaries will appear here after you pick a headline.
         </section>
-        <section
-          id="songLyrics"
-          class="tab-panel"
-          data-role="tab-panel"
-          data-tab="lyrics"
-          role="tabpanel"
-          aria-labelledby="lyricsTab"
-          hidden
-        >
+        <section id="songLyrics" class="tab-panel" data-role="tab-panel" data-tab="lyrics" role="tabpanel" aria-labelledby="lyricsTab" hidden>
           Lyrics will appear here after you generate or load a spin.
         </section>
       </div>
 
       <section class="generate-song">
         <button type="button" id="generateSongButton" disabled>Generate Song</button>
-        <p class="generate-song-status" id="generateSongStatus" aria-live="polite"></p>
+        <p id="generateSongStatus" class="generate-song-status" aria-live="polite"></p>
       </section>
     </main>
-  </div>
-
-  <div class="mobile-bottom-bar" id="mobileBottomBar">
-    <div class="mobile-now-playing" id="mobileNowPlaying" aria-hidden="true">
-      <button
-        type="button"
-        class="mobile-now-playing__toggle"
-        id="mobileNowPlayingToggle"
-        aria-expanded="false"
-      >
-        <div class="mobile-now-playing__details">
-          <span class="mobile-now-playing__title" id="mobileNowPlayingTitle">Choose a headline</span>
-          <span class="mobile-now-playing__meta" id="mobileNowPlayingMeta"
-            >Select a headline from the list to load the article.</span
-          >
-        </div>
-        <span class="mobile-now-playing__chevron" aria-hidden="true">⌃</span>
-      </button>
-      <button type="button" class="mobile-now-playing__play" id="mobilePlayButton" aria-label="Play" disabled>
-        ▶
-      </button>
+    <div id="dockedAudio">
+      <audio id="audioPlayer" controls preload="none">
+        <source id="audioSource" src="" type="audio/mpeg" />
+        Your browser does not support the audio element.
+      </audio>
     </div>
-
-    <nav class="mobile-bottom-nav" aria-label="Primary">
-      <button type="button" class="mobile-bottom-nav__button active" data-role="mobile-nav" data-target="headlines">
-        Headlines
-      </button>
-      <button type="button" class="mobile-bottom-nav__button" data-role="mobile-nav" data-target="recent">
-        Recent Spins
-      </button>
-    </nav>
   </div>
 
-  <div class="mobile-player-scrim" id="mobilePlayerScrim" hidden></div>
+  
 
+  <!-- Mobile Bottom Bar -->
+  <nav class="mobile-bottom-nav" aria-label="Primary">
+    <button type="button" class="mobile-bottom-nav__button active" data-role="mobile-nav" data-target="headlines">
+      Headlines
+    </button>
+    <button type="button" class="mobile-bottom-nav__button" data-role="mobile-nav" data-target="recent">
+      Recent Spins
+    </button>
+    <button type="button" class="mobile-bottom-nav__button" data-role="mobile-nav" data-target="player">
+      Now Playing
+    </button>
+  </nav>
+
+  <!-- Templates -->
   <template id="headlineItemTemplate">
     <li>
       <button type="button" data-role="headline-item">
@@ -748,7 +415,7 @@
     <li>
       <button type="button" data-role="song-item">
         <div class="song-thumb" aria-hidden="true">
-          <img loading="lazy" decoding="async" alt="" />
+          <img loading="lazy" decoding="async" alt=""/>
           <span class="song-thumb-placeholder">AI</span>
         </div>
         <div class="song-info">
@@ -759,619 +426,335 @@
     </li>
   </template>
 
+  <!-- =========================
+       Script (Organized)
+  ========================== -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
     import {
-      getFirestore,
-      collection,
-      query,
-      orderBy,
-      limit,
-      onSnapshot,
-      addDoc,
-      updateDoc,
-      serverTimestamp,
+      getFirestore, collection, query, orderBy, limit, onSnapshot, addDoc, updateDoc, serverTimestamp
     } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
-    let db = null;
-    let songsCache = [];
-    let currentSongId = null;
-    let unsubscribeSongs = null;
-    let firebaseInitPromise = null;
-    let headlinesCache = [];
-    let currentHeadlineKey = null;
-    let selectedStory = null;
-    let latestArticleContent = '';
-    let isGenerating = false;
-    let latestSummary = '';
-    let headlineViewMode = 'sources';
-    let groupedHeadlines = new Map();
-    let selectedHeadlineSource = null;
-    let generateSongButton = null;
-    let activeContentTab = 'article';
+    /* ---------- Utilities ---------- */
+    const PROXYABLE_AUDIO_HOSTS = ['audiopipe.suno.ai','cdn.suno.ai','cdn1.suno.ai','cdn2.suno.ai','cdn3.suno.ai'];
+    const SUNO_AUDIO_HOST_MIGRATIONS = new Map([['audiopipe.suno.ai','cdn1.suno.ai']]);
 
-    const PROXYABLE_AUDIO_HOSTS = [
-      'audiopipe.suno.ai',
-      'cdn.suno.ai',
-      'cdn1.suno.ai',
-      'cdn2.suno.ai',
-      'cdn3.suno.ai',
-    ];
+    const isFinalSunoState = s => typeof s==='string' && ['complete','completed','succeeded'].includes(s.trim().toLowerCase());
+    const sanitizeImageUrl = v => {
+      if (typeof v!=='string') return '';
+      const t = v.trim(); if (!t) return ''; if (t.startsWith('/') || t.startsWith('data:image/')) return t;
+      try { const u=new URL(t); return ['http:','https:'].includes(u.protocol)?u.toString():'' } catch { return '' }
+    };
+    const normalizeSunoAudioUrl = (v,{migrateHost=false}={})=>{
+      if (typeof v!=='string') return '';
+      const t=v.trim(); if(!t) return ''; if(t.startsWith('/')) return t;
+      try{ const u=new URL(t); const h=u.hostname.toLowerCase();
+        if(migrateHost&&SUNO_AUDIO_HOST_MIGRATIONS.has(h)) u.hostname=SUNO_AUDIO_HOST_MIGRATIONS.get(h);
+        return u.toString();
+      }catch{ return t }
+    };
+    const sanitizeAudioUrl = (v,opts)=>normalizeSunoAudioUrl(v,opts);
+    const needsAudioProxy = url => { try{ const h=new URL(url).hostname.toLowerCase(); return PROXYABLE_AUDIO_HOSTS.some(a=>h===a||h.endsWith('.'+a)) }catch{ return false } };
+    const getPlayableAudioUrl = raw => {
+      const s = sanitizeAudioUrl(raw); if(!s) return '';
+      if (s.startsWith('/api/proxy-audio?')) return s;
+      return needsAudioProxy(s) ? `/api/proxy-audio?src=${encodeURIComponent(s)}` : s;
+    };
+    const formatDate = d => d instanceof Date && !Number.isNaN(d) ? d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}) : '';
+    const formatTime = d => d instanceof Date && !Number.isNaN(d) ? d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}) : '';
+    const formatDateTime = d => { const a=formatDate(d), b=formatTime(d); return a&&b?`${a} • ${b}`:a||b||'Generated' };
 
-    const SUNO_AUDIO_HOST_MIGRATIONS = new Map([
-      ['audiopipe.suno.ai', 'cdn1.suno.ai'],
-    ]);
+    /* ---------- State ---------- */
+    let db=null, firebaseInitPromise=null;
+    let songsCache=[], currentSongId=null, unsubscribeSongs=null;
+    let headlinesCache=[], groupedHeadlines=new Map(), headlineViewMode='sources', selectedHeadlineSource=null;
+    let currentHeadlineKey=null, selectedStory=null, latestArticleContent='', latestSummary='', isGenerating=false;
+    let generateSongButton=null, activeContentTab='article';
 
-    function normalizeSunoAudioUrl(value, { migrateHost = false } = {}) {
-      if (typeof value !== 'string') return '';
+    /* ---------- DOM Helpers ---------- */
+    const $ = sel => document.querySelector(sel);
+    const $$ = sel => document.querySelectorAll(sel);
 
-      const trimmed = value.trim();
-      if (!trimmed) return '';
-
-      if (trimmed.startsWith('/')) return trimmed;
-
-      try {
-        const parsed = new URL(trimmed);
-        const lowerHost = parsed.hostname.toLowerCase();
-
-        if (migrateHost) {
-          const migratedHost = SUNO_AUDIO_HOST_MIGRATIONS.get(lowerHost);
-          if (migratedHost) {
-            parsed.hostname = migratedHost;
-          }
-        }
-
-        return parsed.toString();
-      } catch {
-        return trimmed;
-      }
-    }
-
-    function sanitizeAudioUrl(value, options) {
-      return normalizeSunoAudioUrl(value, options);
-    }
-
-    function sanitizeImageUrl(value) {
-      if (typeof value !== 'string') return '';
-
-      const trimmed = value.trim();
-      if (!trimmed) return '';
-      if (trimmed.startsWith('/')) return trimmed;
-      if (trimmed.startsWith('data:image/')) return trimmed;
-
-      try {
-        const parsed = new URL(trimmed);
-        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-          return '';
-        }
-        return parsed.toString();
-      } catch {
-        return '';
-      }
-    }
-
-    function isMigratingAudioHost(url) {
-      if (!url) return false;
-      try {
-        const parsed = new URL(url);
-        const host = parsed.hostname.toLowerCase();
-        return SUNO_AUDIO_HOST_MIGRATIONS.has(host);
-      } catch {
-        return false;
-      }
-    }
-
-    function isFinalSunoState(state) {
-      if (typeof state !== 'string') return false;
-      const normalized = state.trim().toLowerCase();
-      return normalized === 'complete' || normalized === 'completed' || normalized === 'succeeded';
-    }
-
-    function needsAudioProxy(url) {
-      try {
-        const parsed = new URL(url);
-        const host = parsed.hostname.toLowerCase();
-        return PROXYABLE_AUDIO_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
-      } catch {
-        return false;
-      }
-    }
-
-    function getPlayableAudioUrl(rawUrl) {
-      const sanitized = sanitizeAudioUrl(rawUrl);
-      if (!sanitized) return '';
-      if (sanitized.startsWith('/api/proxy-audio?')) {
-        return sanitized;
-      }
-      if (needsAudioProxy(sanitized)) {
-        return `/api/proxy-audio?src=${encodeURIComponent(sanitized)}`;
-      }
-      return sanitized;
-    }
-
-    async function initFirebase() {
-      if (firebaseInitPromise) return firebaseInitPromise;
-
-      firebaseInitPromise = (async () => {
-        const response = await fetch('/api/firebase-config');
-        if (!response.ok) {
-          throw new Error('Unable to load Firebase configuration.');
-        }
-
-        const config = await response.json();
-        const app = initializeApp(config);
-        db = getFirestore(app);
-        return db;
-      })();
-
-      return firebaseInitPromise;
-    }
-
-    function updateGenerateButton({ disabled, text } = {}) {
-      if (!generateSongButton) return;
-      if (typeof disabled === 'boolean') {
-        generateSongButton.disabled = disabled;
-      }
-      if (typeof text === 'string') {
-        generateSongButton.textContent = text;
-      }
-    }
-
-    function setActiveTab(tab) {
-      const normalized = tab === 'lyrics' ? 'lyrics' : 'article';
-      activeContentTab = normalized;
-
-      document.querySelectorAll('[data-role="player-tab"]').forEach((button) => {
-        const isActive = button.dataset.tab === normalized;
-        button.classList.toggle('active', isActive);
-        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
-        button.setAttribute('tabindex', isActive ? '0' : '-1');
-      });
-
-      document.querySelectorAll('[data-role="tab-panel"]').forEach((panel) => {
-        const shouldShow = panel.dataset.tab === normalized;
-        if (shouldShow) {
-          panel.removeAttribute('hidden');
-        } else {
-          panel.setAttribute('hidden', '');
-        }
+    const audio = document.getElementById('audioPlayer');
+    if (audio){
+      ['loadeddata','emptied','abort','error'].forEach(evt=>{
+        audio.addEventListener(evt, updateDockState);
       });
     }
 
-    function syncMobilePlayButton() {
-      const audio = document.getElementById('audioPlayer');
-      const playButton = document.getElementById('mobilePlayButton');
-      const source = document.getElementById('audioSource');
-      if (!playButton) return;
+    const showListEmptyState = (listId, msg)=>{
+      const list = document.getElementById(listId); if(!list) return;
+      list.innerHTML = `<li class="empty-state">${msg}</li>`;
+    };
+    const updateStatus = msg => { const el=$('#generateSongStatus'); if(el) el.textContent = msg||'' };
+    const updateGenerateButton = ({disabled,text}={})=>{
+      if(!generateSongButton) return;
+      if(typeof disabled==='boolean') generateSongButton.disabled = disabled;
+      if(typeof text==='string') generateSongButton.textContent = text;
+    };
 
-      const sourceValue = source ? source.getAttribute('src') : '';
-      const hasSource = Boolean(sourceValue);
-      playButton.disabled = !hasSource;
-
-      if (!audio) {
-        playButton.textContent = '▶';
-        playButton.setAttribute('aria-label', 'Play');
-        return;
-      }
-
-      const isPlaying = !audio.paused && !audio.ended;
-      playButton.textContent = isPlaying ? '❚❚' : '▶';
-      const label = isPlaying ? 'Pause' : hasSource ? 'Play' : 'Play (unavailable)';
-      playButton.setAttribute('aria-label', label);
-    }
-
-    function syncMobileNowPlayingBar() {
-      const bar = document.getElementById('mobileNowPlaying');
-      if (!bar) return;
-
-      const desktopTitle = document.getElementById('songTitle');
-      const desktopMeta = document.getElementById('songMeta');
-      const mobileTitle = document.getElementById('mobileNowPlayingTitle');
-      const mobileMeta = document.getElementById('mobileNowPlayingMeta');
-
-      if (mobileTitle && desktopTitle) {
-        mobileTitle.textContent = desktopTitle.textContent || '';
-      }
-      if (mobileMeta && desktopMeta) {
-        mobileMeta.textContent = desktopMeta.textContent || '';
-      }
-
-      bar.setAttribute('aria-hidden', 'false');
-      syncMobilePlayButton();
-    }
-
-    function setActiveMobileSection(section) {
-      const normalized = section === 'recent' ? 'recent' : 'headlines';
-
-      document.querySelectorAll('[data-role="mobile-nav"]').forEach((button) => {
-        const isActive = button.dataset.target === normalized;
-        button.classList.toggle('active', isActive);
-        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    /* ---------- Tabs / Mobile UI ---------- */
+    function setActiveTab(tab){
+      const t = tab==='lyrics' ? 'lyrics' : 'article';
+      activeContentTab = t;
+      $$('[data-role="player-tab"]').forEach(btn=>{
+        const on = btn.dataset.tab===t;
+        btn.classList.toggle('active',on);
+        btn.setAttribute('aria-selected', on?'true':'false');
+        btn.setAttribute('tabindex', on?'0':'-1');
       });
-
-      document.querySelectorAll('.sidebar-section').forEach((panel) => {
-        const isMatch = panel.dataset.section === normalized;
-        panel.classList.toggle('active', isMatch);
+      $$('[data-role="tab-panel"]').forEach(p=>{
+        p.toggleAttribute('hidden', p.dataset.tab!==t);
       });
     }
 
-    function toggleMobilePlayer(force) {
-      const body = document.body;
-      if (!body) return;
-      const scrim = document.getElementById('mobilePlayerScrim');
-      const toggle = document.getElementById('mobileNowPlayingToggle');
+    function setActiveMobileSection(section){
+      const normalized = (section==='recent' ? 'recent' : (section==='player' ? 'player' : 'headlines'));
 
-      const shouldOpen = typeof force === 'boolean' ? force : !body.classList.contains('mobile-player-open');
-      body.classList.toggle('mobile-player-open', shouldOpen);
-
-      if (toggle) toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
-      if (scrim)  scrim.hidden = !shouldOpen;
-
-      // ensure off state can't eat taps (paired with CSS pointer-events)
-      document.querySelector('.player-panel')?.setAttribute('aria-hidden', shouldOpen ? 'false' : 'true');
-    }
-
-    function resetNowPlaying() {
-      const title = document.getElementById('songTitle');
-      const meta = document.getElementById('songMeta');
-      const articlePanel = document.getElementById('songArticle');
-      const lyricsPanel = document.getElementById('songLyrics');
-      const audio = document.getElementById('audioPlayer');
-      const source = document.getElementById('audioSource');
-      const tag = document.getElementById('songTag');
-
-      title.textContent = 'Choose a headline';
-      meta.textContent = 'Select a news headline to read the story and optionally spin a Suno track.';
-      if (articlePanel) {
-        articlePanel.textContent = 'Article summaries will appear here after you pick a headline.';
-      }
-      if (lyricsPanel) {
-        lyricsPanel.textContent = 'Lyrics will appear here after you generate or load a spin.';
-      }
-      source.src = '';
-      audio.load();
-      tag.textContent = 'Top Stories';
-      tag.style.background = 'rgba(96, 165, 250, 0.18)';
-      tag.style.color = '#60a5fa';
-
-      selectedStory = null;
-      latestArticleContent = '';
-      latestSummary = '';
-      setActiveTab('article');
-      updateGenerateButton({ disabled: true, text: 'Generate Song' });
-      syncMobileNowPlayingBar();
-      toggleMobilePlayer(false);
-    }
-
-    function showListEmptyState(listId, message) {
-      const list = document.getElementById(listId);
-      if (!list) return;
-      list.innerHTML = `<li class="empty-state">${message}</li>`;
-    }
-
-    function updateStatus(message) {
-      const status = document.getElementById('generateSongStatus');
-      if (!status) return;
-      status.textContent = message || '';
-    }
-
-    function groupHeadlinesBySource(stories) {
-      const map = new Map();
-      stories.forEach((story) => {
-        const source = (story.source || 'Latest Headlines').trim();
-        if (!map.has(source)) {
-          map.set(source, []);
-        }
-        map.get(source).push(story);
+      // nav state
+      document.querySelectorAll('[data-role="mobile-nav"]').forEach(button=>{
+        const on = button.dataset.target === normalized;
+        button.classList.toggle('active', on);
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
       });
-      return map;
+
+      // “pages”: headlines/recent (sidebar sections) + player-panel
+      document.querySelectorAll('.sidebar-section').forEach(panel=>{
+        panel.classList.toggle('active', panel.dataset.section === normalized);
+      });
+      const player = document.querySelector('.player-panel');
+      if (player) player.classList.toggle('active', normalized === 'player');
     }
 
-    function renderHeadlineSources() {
-      const list = document.getElementById('headlineList');
-      const template = document.getElementById('headlineSourceTemplate');
-      if (!list || !template) return;
+    function updateDockState(){
+      const src = document.getElementById('audioSource')?.getAttribute('src') || '';
+      document.body.classList.toggle('has-audio', !!src);
+    }
 
-      const entries = Array.from(groupedHeadlines.entries()).filter(([, stories]) => stories.length);
+    /* ---------- Headlines UI ---------- */
+    const groupHeadlinesBySource = stories=>{
+      const m=new Map();
+      stories.forEach(s=>{
+        const src=(s.source||'Latest Headlines').trim();
+        if(!m.has(src)) m.set(src,[]);
+        m.get(src).push(s);
+      });
+      return m;
+    };
 
-      if (!entries.length) {
-        showListEmptyState('headlineList', 'No fresh headlines were found. Try again later.');
-        return;
-      }
-
-      list.innerHTML = '';
-
-      entries.forEach(([source, stories]) => {
-        const clone = template.content.cloneNode(true);
-        const button = clone.querySelector('button');
-        const title = clone.querySelector('.song-title');
-        const meta = clone.querySelector('.song-meta');
-
-        if (title) title.textContent = source;
-        if (meta) meta.textContent = `${stories.length} headline${stories.length === 1 ? '' : 's'}`;
-
-        if (button) {
-          button.classList.toggle('active', source === selectedHeadlineSource);
-          button.addEventListener('click', () => {
-            showHeadlinesForSource(source);
-          });
-        }
-
-        list.appendChild(clone);
+    function renderHeadlineSources(){
+      const list=$('#headlineList'), tpl=$('#headlineSourceTemplate'); if(!list||!tpl) return;
+      const entries = Array.from(groupedHeadlines.entries()).filter(([,v])=>v.length);
+      if(!entries.length){ showListEmptyState('headlineList','No fresh headlines were found. Try again later.'); return }
+      list.innerHTML='';
+      entries.forEach(([source,stories])=>{
+        const node = tpl.content.cloneNode(true);
+        const btn = node.querySelector('button');
+        node.querySelector('.song-title').textContent = source;
+        node.querySelector('.song-meta').textContent = `${stories.length} headline${stories.length===1?'':'s'}`;
+        btn.classList.toggle('active', source===selectedHeadlineSource);
+        btn.addEventListener('click', ()=> showHeadlinesForSource(source));
+        list.appendChild(node);
       });
     }
 
-    function renderHeadlineStories(stories) {
-      const list = document.getElementById('headlineList');
-      const template = document.getElementById('headlineItemTemplate');
-      if (!list || !template) return;
+    function renderHeadlineStories(stories){
+      const list=$('#headlineList'), tpl=$('#headlineItemTemplate'); if(!list||!tpl) return;
+      list.innerHTML='';
 
-      list.innerHTML = '';
+      // Back row
+      const backItem=document.createElement('li');
+      const backBtn=document.createElement('button');
+      backBtn.type='button'; backBtn.dataset.role='headline-back'; backBtn.classList.add('back-button');
+      backBtn.innerHTML='<span class="song-title">← Back to sources</span><span class="song-meta">Choose another news outlet</span>';
+      backBtn.setAttribute('aria-label','Back to news sources');
+      backBtn.addEventListener('click', showHeadlineSources);
+      backItem.appendChild(backBtn); list.appendChild(backItem);
 
-      const backItem = document.createElement('li');
-      const backButton = document.createElement('button');
-      backButton.type = 'button';
-      backButton.dataset.role = 'headline-back';
-      backButton.classList.add('back-button');
-      backButton.innerHTML =
-        '<span class="song-title">← Back to sources</span><span class="song-meta">Choose another news outlet</span>';
-      backButton.setAttribute('aria-label', 'Back to news sources');
-      backButton.addEventListener('click', () => {
-        showHeadlineSources();
-      });
-      backItem.appendChild(backButton);
-      list.appendChild(backItem);
-
-      if (!stories.length) {
-        const empty = document.createElement('li');
-        empty.className = 'empty-state';
-        empty.textContent = 'No fresh headlines were found for this source.';
-        list.appendChild(empty);
-        return;
+      if(!stories.length){
+        const empty=document.createElement('li'); empty.className='empty-state';
+        empty.textContent='No fresh headlines were found for this source.'; list.appendChild(empty); return;
       }
 
-      stories.forEach((story) => {
-        const clone = template.content.cloneNode(true);
-        const button = clone.querySelector('button');
-        const title = clone.querySelector('.song-title');
-        const meta = clone.querySelector('.song-meta');
+      stories.forEach(story=>{
+        const node=tpl.content.cloneNode(true);
+        const btn=node.querySelector('button');
+        const title=node.querySelector('.song-title');
+        const meta=node.querySelector('.song-meta');
 
         const key = story.link || `${story.source || 'source'}:${story.headline}`;
-        const preview = (story.summary || '').trim();
-        const truncatedPreview = preview.length > 140 ? `${preview.slice(0, 140).trimEnd()}…` : preview;
+        const preview=(story.summary||'').trim();
+        const truncated = preview.length>140 ? `${preview.slice(0,140).trimEnd()}…` : preview;
 
-        if (title) title.textContent = story.headline || 'Untitled story';
-        if (meta) meta.textContent = [story.source, truncatedPreview].filter(Boolean).join(' • ');
-
-        if (button) {
-          button.dataset.id = key;
-          button.classList.toggle('active', key === currentHeadlineKey);
-          button.addEventListener('click', () => {
-            handleHeadlineSelection({ ...story, key });
-          });
-        }
-
-        list.appendChild(clone);
+        title.textContent = story.headline || 'Untitled story';
+        meta.textContent = [story.source, truncated].filter(Boolean).join(' • ');
+        btn.dataset.id = key;
+        btn.classList.toggle('active', key===currentHeadlineKey);
+        btn.addEventListener('click', ()=> handleHeadlineSelection({ ...story, key }));
+        list.appendChild(node);
       });
     }
 
-    function refreshHeadlineView() {
-      if (headlineViewMode === 'sources') {
-        renderHeadlineSources();
-        return;
-      }
-
-      if (selectedHeadlineSource) {
-        const stories = groupedHeadlines.get(selectedHeadlineSource) || [];
-        renderHeadlineStories(stories);
+    function refreshHeadlineView(){
+      if (headlineViewMode==='sources') return renderHeadlineSources();
+      if (selectedHeadlineSource){
+        renderHeadlineStories(groupedHeadlines.get(selectedHeadlineSource) || []);
       }
     }
-
-    function showHeadlineSources() {
-      headlineViewMode = 'sources';
-      refreshHeadlineView();
-      updateStatus('Select a news source to browse its latest headlines.');
+    function showHeadlineSources(){
+      headlineViewMode='sources'; updateStatus('Select a news source to browse its latest headlines.'); refreshHeadlineView();
     }
-
-    function showHeadlinesForSource(source) {
-      selectedHeadlineSource = source;
-      headlineViewMode = 'stories';
-      refreshHeadlineView();
+    function showHeadlinesForSource(source){
+      selectedHeadlineSource=source; headlineViewMode='stories';
       updateStatus('Pick a headline to read the story and optionally generate a Suno track.');
+      refreshHeadlineView();
+    }
+    function setHeadlines(stories){
+      headlinesCache=stories;
+      groupedHeadlines=groupHeadlinesBySource(stories);
+      selectedHeadlineSource=null; currentHeadlineKey=null; selectedStory=null;
+      resetNowPlaying(); showHeadlineSources();
     }
 
-    function setHeadlines(stories) {
-      headlinesCache = stories;
-      groupedHeadlines = groupHeadlinesBySource(headlinesCache);
-      selectedHeadlineSource = null;
-      currentHeadlineKey = null;
-      selectedStory = null;
-      resetNowPlaying();
-      showHeadlineSources();
+    /* ---------- Player / Song Flow ---------- */
+    function resetNowPlaying(){
+      $('#songTitle').textContent='Choose a headline';
+      $('#songMeta').textContent='Select a news headline to read the story and optionally spin a Suno track.';
+      $('#songArticle').textContent='Article summaries will appear here after you pick a headline.';
+      $('#songLyrics').textContent='Lyrics will appear here after you generate or load a spin.';
+      $('#audioSource').src=''; $('#audioPlayer').load();
+
+      const tag=$('#songTag');
+      tag.textContent='Top Stories'; tag.style.background='rgba(96,165,250,.18)'; tag.style.color='#60a5fa';
+
+      selectedStory=null; latestArticleContent=''; latestSummary='';
+      setActiveTab('article'); updateGenerateButton({disabled:true, text:'Generate Song'});
+
+      updateDockState();
     }
 
-    function handleHeadlineSelection(story) {
-      if (!story || !story.key) {
-        updateStatus('This headline is missing critical information.');
-        return;
-      }
+    async function fetchAndDisplayArticle(story){
+      if(!story?.link){ updateStatus('The selected headline does not have a readable article link.'); updateGenerateButton({disabled:true,text:'Generate Song'}); return }
+      try{
+        const r=await fetch('/api/article-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:story.link})});
+        const body=await r.json().catch(()=>({}));
+        if(!r.ok){ throw new Error(body?.error || 'Unable to load the full article right now.') }
 
-      if (isGenerating && story.key !== currentHeadlineKey) {
-        updateStatus('Please wait until the current track finishes generating.');
-        return;
-      }
+        latestArticleContent=(body.content||'').trim();
+        if(!selectedStory || selectedStory.key!==story.key) return;
 
-      currentHeadlineKey = story.key;
-      selectedHeadlineSource = (story.source || 'Latest Headlines').trim();
-      headlineViewMode = 'stories';
-      selectedStory = story;
-      latestArticleContent = '';
-      latestSummary = '';
+        const summary=(story.summary||'').trim();
+        const combined = summary && latestArticleContent ? `${summary}\n\n${latestArticleContent}` : summary || latestArticleContent;
+        $('#songArticle').textContent = combined || 'The article is available, but it is empty.';
+
+        const tag=$('#songTag'); tag.textContent='Article Ready'; tag.style.background='rgba(52,211,153,.2)'; tag.style.color='#34d399';
+        updateStatus('Article loaded. Ready to generate a Suno song.');
+        updateGenerateButton({disabled:false, text:'Generate Song'});
+      }catch(err){
+        if(!selectedStory || selectedStory.key!==story.key) return;
+        $('#songArticle').textContent = story.summary || 'Unable to load the full article. You can still try generating a song.';
+        updateStatus(err.message || 'Unable to load the full article.'); updateGenerateButton({disabled:false,text:'Generate Song'});
+      }
+    }
+
+    function handleHeadlineSelection(story){
+      if(!story || !story.key){ updateStatus('This headline is missing critical information.'); return }
+      if(isGenerating && story.key!==currentHeadlineKey){ updateStatus('Please wait until the current track finishes generating.'); return }
+
+      currentHeadlineKey=story.key;
+      selectedHeadlineSource=(story.source||'Latest Headlines').trim();
+      headlineViewMode='stories';
+      selectedStory=story; latestArticleContent=''; latestSummary='';
       refreshHeadlineView();
 
-      const title = document.getElementById('songTitle');
-      const meta = document.getElementById('songMeta');
-      const articlePanel = document.getElementById('songArticle');
-      const lyricsPanel = document.getElementById('songLyrics');
-      const tag = document.getElementById('songTag');
+      $('#songTitle').textContent = story.headline || 'Selected headline';
+      $('#songMeta').textContent = story.source || 'Breaking news';
+      $('#songArticle').textContent = story.summary || 'Fetching the full article…';
+      $('#songLyrics').textContent = 'Lyrics will appear once a Suno track has been generated.';
 
-      if (title) title.textContent = story.headline || 'Selected headline';
-      if (meta) meta.textContent = story.source || 'Breaking news';
-      if (articlePanel)
-        articlePanel.textContent = story.summary || 'Fetching the full article…';
-      if (lyricsPanel)
-        lyricsPanel.textContent = 'Lyrics will appear once a Suno track has been generated.';
-      if (tag) {
-        tag.textContent = 'Article';
-        tag.style.background = 'rgba(245, 158, 11, 0.18)';
-        tag.style.color = 'var(--accent)';
-      }
+      const tag=$('#songTag'); tag.textContent='Article'; tag.style.background='rgba(245,158,11,.18)'; tag.style.color='var(--accent)';
 
       setActiveTab('article');
-      syncMobileNowPlayingBar();
-      updateGenerateButton({ disabled: true, text: 'Loading Article…' });
+      updateGenerateButton({disabled:true, text:'Loading Article…'});
       updateStatus('Fetching the full article…');
       fetchAndDisplayArticle(story);
     }
 
-    async function fetchAndDisplayArticle(story) {
-      if (!story?.link) {
-        updateStatus('The selected headline does not have a readable article link.');
-        updateGenerateButton({ disabled: true, text: 'Generate Song' });
-        return;
+    async function pollForAudioIds({taskIds=[], clipIds=[]}, {timeoutMs=180000, intervalMs=5000, requireFinalAudioHost=false}={}){
+      const start=Date.now();
+      while(Date.now()-start < timeoutMs){
+        const qs = clipIds.length ? `clip_ids=${encodeURIComponent(clipIds.join(','))}` : `task_ids=${encodeURIComponent(taskIds.join(','))}`;
+        try{
+          const r=await fetch(`/api/song-status?${qs}`);
+          if(!r.ok){ await new Promise(res=>setTimeout(res,intervalMs)); continue }
+          const {data=[]}=await r.json(); const ready=data.find(d=>d && d.audio_url);
+          if(ready){
+            if(requireFinalAudioHost){
+              const final=isFinalSunoState(ready.state);
+              const migrating=(()=>{ try{ const h=new URL(ready.audio_url).hostname.toLowerCase(); return SUNO_AUDIO_HOST_MIGRATIONS.has(h) }catch{ return false }})();
+              if(!final || migrating){ await new Promise(res=>setTimeout(res,intervalMs)); continue }
+            }
+            return ready;
+          }
+        }catch{ await new Promise(res=>setTimeout(res,intervalMs)) }
       }
-
-      try {
-        const response = await fetch('/api/article-content', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: story.link }),
-        });
-
-        const body = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          const message = body?.error || 'Unable to load the full article right now.';
-          throw new Error(message);
-        }
-
-        const article = (body.content || '').trim();
-        latestArticleContent = article;
-
-        if (!selectedStory || selectedStory.key !== story.key) {
-          return;
-        }
-
-        const articlePanel = document.getElementById('songArticle');
-        if (articlePanel) {
-          const summary = (story.summary || '').trim();
-          const combined = summary && article ? `${summary}\n\n${article}` : summary || article;
-          articlePanel.textContent = combined || 'The article is available, but it is empty.';
-        }
-
-        const tag = document.getElementById('songTag');
-        if (tag) {
-          tag.textContent = 'Article Ready';
-          tag.style.background = 'rgba(52, 211, 153, 0.2)';
-          tag.style.color = '#34d399';
-        }
-
-        updateStatus('Article loaded. Ready to generate a Suno song.');
-        updateGenerateButton({ disabled: false, text: 'Generate Song' });
-      } catch (error) {
-        console.error('Failed to load full article:', error);
-        if (!selectedStory || selectedStory.key !== story.key) {
-          return;
-        }
-        const articlePanel = document.getElementById('songArticle');
-        if (articlePanel) {
-          articlePanel.textContent =
-            story.summary || 'Unable to load the full article. You can still try generating a song.';
-        }
-
-        updateStatus(error.message || 'Unable to load the full article.');
-        updateGenerateButton({ disabled: false, text: 'Generate Song' });
-      }
+      throw new Error('Timed out waiting for Suno audio.');
     }
 
-    async function generateSongForHeadline(story) {
-      if (!story?.link) {
-        updateStatus('The selected headline does not have a readable article link.');
-        return;
-      }
+    function populateFromSuno(song){
+      const createdAt = song.createdAt instanceof Date ? song.createdAt : new Date();
+      const pieces=[]; if(song.sunoTitle) pieces.push(`Suno: ${song.sunoTitle}`); if(song.articleSource) pieces.push(song.articleSource);
+      const ts=formatDateTime(createdAt); if(ts) pieces.push(ts);
 
-      if (isGenerating) {
-        return;
-      }
+      $('#songTitle').textContent = song.articleHeadline || song.sunoTitle || 'Daily Spin (Suno)';
+      $('#songMeta').textContent = pieces.join(' — ') || 'Generated';
 
-      isGenerating = true;
-      latestSummary = '';
-      updateGenerateButton({ disabled: true, text: 'Generating…' });
+      const articleParts=[]; if(song.articleHeadline) articleParts.push(song.articleHeadline);
+      if(song.articleContent) articleParts.push(song.articleContent); else if(song.articleSummary) articleParts.push(song.articleSummary);
+      $('#songArticle').textContent = articleParts.join('\n\n') || 'Your Suno track is ready. Enjoy!';
+      $('#songLyrics').textContent = (song.lyrics || song.prompt || '').trim() || 'Lyrics were not provided for this spin.';
 
-      const audio = document.getElementById('audioPlayer');
-      const source = document.getElementById('audioSource');
-      if (audio && source) {
-        source.src = '';
-        audio.load();
-      }
+      const src = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
+      $('#audioSource').src = src; $('#audioPlayer').load(); if(src){ $('#audioPlayer').play().catch(()=>{}) }
 
-      try {
-        const response = await fetch('/api/generate-song', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: story.link,
-            headline: story.headline,
-            source: story.source,
-          }),
-        });
+      const tag=$('#songTag'); tag.textContent='Now Playing'; tag.style.background='rgba(245,158,11,.18)'; tag.style.color='var(--accent)';
+      currentSongId=null;
+      updateDockState();
+    }
 
-        const body = await response.json().catch(() => ({}));
+    async function generateSongForHeadline(story){
+      if(!story?.link){ updateStatus('The selected headline does not have a readable article link.'); return }
+      if(isGenerating) return;
 
-        if (response.status !== 202) {
-          const message = body?.error || 'Failed to create a Suno generation task.';
-          throw new Error(message);
-        }
+      isGenerating=true; latestSummary=''; updateGenerateButton({disabled:true, text:'Generating…'});
+      $('#audioSource').src=''; $('#audioPlayer').load();
 
-        const summary = body.summary || body.prompt || story.summary || '';
-        latestSummary = summary;
+      try{
+        const r=await fetch('/api/generate-song',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:story.link,headline:story.headline,source:story.source})});
+        const body=await r.json().catch(()=>({}));
+        if(r.status!==202) throw new Error(body?.error || 'Failed to create a Suno generation task.');
 
-        const articlePanel = document.getElementById('songArticle');
-        const lyricsPanel = document.getElementById('songLyrics');
-        if (articlePanel) {
-          articlePanel.textContent = summary || 'Waiting for OpenRouter to provide a summary…';
-        }
-        if (lyricsPanel) {
-          lyricsPanel.textContent = 'Lyrics will appear once Suno finishes rendering your track.';
-        }
+        latestSummary = body.summary || body.prompt || story.summary || '';
+
+        $('#songArticle').textContent = latestSummary || 'Waiting for OpenRouter to provide a summary…';
+        $('#songLyrics').textContent = 'Lyrics will appear once Suno finishes rendering your track.';
         setActiveTab('article');
-        syncMobileNowPlayingBar();
 
         const taskIds = Array.isArray(body.task_ids) ? body.task_ids : [];
         const clipIds = Array.isArray(body.clip_ids) ? body.clip_ids : [];
-
-        if (!taskIds.length && !clipIds.length) {
-          throw new Error('Suno did not return any task or clip identifiers.');
-        }
-
+        if(!taskIds.length && !clipIds.length) throw new Error('Suno did not return any task or clip identifiers.');
         updateStatus('Song requested. Waiting for Suno to render…');
 
-        const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs: 180000, intervalMs: 15000 });
-
+        const clip = await pollForAudioIds({taskIds, clipIds}, {timeoutMs:180000, intervalMs:15000});
         const createdAt = clip.created_at ? new Date(clip.created_at) : new Date();
-        const streamUrl = typeof clip.audio_url === 'string' ? sanitizeAudioUrl(clip.audio_url) : '';
+        const streamUrl = sanitizeAudioUrl(clip.audio_url);
         const imageUrl = sanitizeImageUrl(clip.image_url || '');
         const summaryText = (latestSummary || body.prompt || '').trim();
-        const normalizedTaskIds = Array.from(
-          new Set(
-            [
-              ...taskIds
-                .map((value) => (typeof value === 'string' ? value.trim() : ''))
-                .filter(Boolean),
-              typeof clip.task_id === 'string' ? clip.task_id.trim() : '',
-            ].filter(Boolean),
-          ),
-        );
+        const normalizedTaskIds = Array.from(new Set([
+          ...taskIds.map(v=>typeof v==='string'?v.trim():'').filter(Boolean),
+          typeof clip.task_id==='string' ? clip.task_id.trim() : ''
+        ].filter(Boolean)));
+
         const songRecord = {
           id: clip.id || null,
           audioUrl: streamUrl,
@@ -1396,459 +779,48 @@
 
         populateFromSuno(songRecord);
 
-        let saved = false;
-        let docRef = null;
-        try {
-          docRef = await saveGeneratedSong(songRecord);
-          saved = true;
-        } catch (persistError) {
-          console.error('Failed to save song to Firebase:', persistError);
+        let saved=false; let docRef=null;
+        try{ await initFirebase(); docRef = await saveGeneratedSong(songRecord); saved=true }catch(e){ console.warn('Save failed:', e) }
+
+        if(docRef){
+          finalizeSongAudio({docRef, taskIds, clipIds, streamUrl, songRecord})
+            .catch(e=>console.warn('Finalize audio later failed:', e));
         }
 
-        if (docRef) {
-          finalizeSongAudio({
-            docRef,
-            taskIds,
-            clipIds,
-            streamUrl,
-            songRecord,
-          }).catch((error) => {
-            console.warn('Unable to finalise Suno audio URL right now:', error);
-          });
-        }
-
-        updateStatus(
-          saved
-            ? 'Your Suno song is ready and saved to Recent Spins.'
-            : 'Your Suno song is ready, but it could not be saved to Recent Spins.',
-        );
-        updateGenerateButton({ disabled: false, text: 'Generate Another Song' });
-      } catch (error) {
-        console.error('Failed to generate song from headline:', error);
-        updateStatus(error.message || 'Something went wrong while generating the song.');
-        latestSummary = '';
-        if (selectedStory && selectedStory.key === story.key) {
-          updateGenerateButton({ disabled: false, text: 'Try Again' });
-        } else {
-          updateGenerateButton({ disabled: false, text: 'Generate Song' });
-        }
-      } finally {
-        isGenerating = false;
-        refreshHeadlineView();
-        if (
-          selectedStory &&
-          selectedStory.key === story.key &&
-          generateSongButton &&
-          generateSongButton.disabled
-        ) {
-          updateGenerateButton({ disabled: false, text: 'Generate Song' });
-        }
+        updateStatus(saved ? 'Your Suno song is ready and saved to Recent Spins.' : 'Your Suno song is ready, but it could not be saved to Recent Spins.');
+        updateGenerateButton({disabled:false, text:'Generate Another Song'});
+      }catch(err){
+        updateStatus(err.message || 'Something went wrong while generating the song.');
+        latestSummary='';
+        updateGenerateButton({disabled:false, text: selectedStory && selectedStory.key===story.key ? 'Try Again' : 'Generate Song'});
+      }finally{
+        isGenerating=false; refreshHeadlineView();
       }
     }
 
-    function formatDate(date) {
-      if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
-        return '';
-      }
-      return date.toLocaleDateString(undefined, {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-      });
+    async function initFirebase(){
+      if(firebaseInitPromise) return firebaseInitPromise;
+      firebaseInitPromise = (async ()=>{
+        const r=await fetch('/api/firebase-config'); if(!r.ok) throw new Error('Unable to load Firebase configuration.');
+        const config=await r.json(); const app=initializeApp(config); db=getFirestore(app); return db;
+      })();
+      return firebaseInitPromise;
     }
 
-    function formatTime(date) {
-      if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
-        return '';
-      }
-      return date.toLocaleTimeString(undefined, {
-        hour: 'numeric',
-        minute: '2-digit',
-      });
-    }
-
-    function formatDateTime(date) {
-      const datePart = formatDate(date);
-      const timePart = formatTime(date);
-      if (datePart && timePart) return `${datePart} • ${timePart}`;
-      return datePart || timePart || 'Generated';
-    }
-
-    function renderSongList(songs) {
-      songsCache = songs;
-      const list = document.getElementById('songList');
-      const template = document.getElementById('songItemTemplate');
-
-      if (!songs.length) {
-        showListEmptyState('songList', 'No Suno songs have been generated yet. Be the first to spin one!');
-        return;
-      }
-
-      list.innerHTML = '';
-
-      songs.forEach((song) => {
-        const clone = template.content.cloneNode(true);
-        const button = clone.querySelector('button');
-        const title = clone.querySelector('.song-title');
-        const meta = clone.querySelector('.song-meta');
-        const thumb = clone.querySelector('.song-thumb');
-        const thumbImg = thumb ? thumb.querySelector('img') : null;
-        const thumbPlaceholder = thumb ? thumb.querySelector('.song-thumb-placeholder') : null;
-
-        const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
-        title.textContent = displayTitle;
-        const metaPieces = [];
-        if (song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
-        if (song.articleSource) metaPieces.push(song.articleSource);
-        const createdAt = formatDateTime(song.createdAt);
-        if (createdAt) metaPieces.push(createdAt);
-        meta.textContent = metaPieces.filter(Boolean).join(' • ');
-
-        if (thumb) {
-          const sanitizedThumbUrl = sanitizeImageUrl(song.imageUrl || song.image_url || '');
-          const placeholderText = (displayTitle || 'AI').trim().slice(0, 2).toUpperCase();
-          if (thumbPlaceholder) {
-            thumbPlaceholder.textContent = placeholderText || 'AI';
-          }
-
-          if (thumbImg) {
-            if (sanitizedThumbUrl) {
-              thumbImg.src = sanitizedThumbUrl;
-              thumb.classList.add('has-image');
-            } else {
-              thumbImg.removeAttribute('src');
-              thumb.classList.remove('has-image');
-            }
-          }
-        }
-
-        button.dataset.id = song.id || '';
-        button.classList.toggle('active', Boolean(song.id && song.id === currentSongId));
-        button.addEventListener('click', () => {
-          setCurrentSong(song);
-        });
-
-        list.appendChild(clone);
-      });
-    }
-
-    function setCurrentSong(song) {
-      if (!song) {
-        resetNowPlaying();
-        return;
-      }
-
-      currentSongId = song.id || null;
-
-      const title = document.getElementById('songTitle');
-      const meta = document.getElementById('songMeta');
-      const articlePanel = document.getElementById('songArticle');
-      const lyricsPanel = document.getElementById('songLyrics');
-      const audio = document.getElementById('audioPlayer');
-      const source = document.getElementById('audioSource');
-      const tag = document.getElementById('songTag');
-
-      const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
-      title.textContent = displayTitle;
-      const metaPieces = [];
-      if (song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
-      if (song.articleSource) metaPieces.push(song.articleSource);
-      const formatted = formatDateTime(song.createdAt);
-      if (formatted) metaPieces.push(formatted);
-      meta.textContent = metaPieces.join(' — ') || 'Generated';
-
-      if (articlePanel) {
-        const articlePieces = [];
-        if (song.articleHeadline) {
-          articlePieces.push(song.articleHeadline);
-        }
-        if (song.articleContent) {
-          articlePieces.push(song.articleContent);
-        } else if (song.articleSummary) {
-          articlePieces.push(song.articleSummary);
-        }
-        articlePanel.textContent =
-          articlePieces.join('\n\n') || 'Article details are unavailable for this spin.';
-      }
-
-      if (lyricsPanel) {
-        const lyricsText = (song.lyrics || song.prompt || '').trim();
-        lyricsPanel.textContent = lyricsText || 'Lyrics were not provided for this spin.';
-      }
-      const playableSrc = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
-      const currentSrc = source.getAttribute('src') || '';
-      if (playableSrc !== currentSrc) {
-        source.src = playableSrc;
-        audio.load();
-        if (playableSrc) {
-          audio.play().catch(() => {});
-        }
-      } else if (playableSrc) {
-        audio.play().catch(() => {});
-      }
-
-      const isNewest = songsCache.length > 0 && songsCache[0]?.id === song.id;
-      if (isNewest) {
-        tag.textContent = 'Now Playing';
-        tag.style.background = 'rgba(245, 158, 11, 0.18)';
-        tag.style.color = 'var(--accent)';
-      } else {
-        tag.textContent = 'From the Archives';
-        tag.style.background = 'rgba(148, 163, 184, 0.2)';
-        tag.style.color = 'var(--text)';
-      }
-
-      document.querySelectorAll('[data-role="song-item"]').forEach((button) => {
-        button.classList.toggle('active', button.dataset.id === (song.id || ''));
-      });
-
-      syncMobileNowPlayingBar();
-    }
-
-    async function subscribeToSongs() {
-      if (!db) return;
-
-      if (unsubscribeSongs) {
-        unsubscribeSongs();
-      }
-
-      const songsRef = collection(db, 'spins');
-      const songsQuery = query(songsRef, orderBy('createdAt', 'desc'), limit(50));
-
-      unsubscribeSongs = onSnapshot(
-        songsQuery,
-        (snapshot) => {
-          const songs = snapshot.docs
-            .map((doc) => {
-              const data = doc.data();
-              const createdAt =
-                (data.createdAt && typeof data.createdAt.toDate === 'function'
-                  ? data.createdAt.toDate()
-                  : data.generatedAtIso
-                  ? new Date(data.generatedAtIso)
-                  : null);
-
-              const rawAudioUrl = sanitizeAudioUrl(data.audioUrl);
-              const rawStreamUrl = sanitizeAudioUrl(data.streamUrl);
-              const rawImageUrl = sanitizeImageUrl(data.imageUrl || data.image_url || '');
-              const storedTaskIds = Array.isArray(data.taskIds)
-                ? data.taskIds
-                    .map((value) => (typeof value === 'string' ? value.trim() : ''))
-                    .filter(Boolean)
-                : [];
-              const primaryTaskId = typeof data.primaryTaskId === 'string'
-                ? data.primaryTaskId.trim()
-                : storedTaskIds[0] || '';
-
-              return {
-                id: doc.id,
-                title: data.title || data.sunoTitle || 'Daily Spin (Suno)',
-                sunoTitle: data.sunoTitle || data.title || 'Daily Spin (Suno)',
-                artist: data.artist || data.sunoArtist || 'Suno AI',
-                sunoArtist: data.sunoArtist || data.artist || 'Suno AI',
-                lyrics: data.lyrics || data.prompt || '',
-                audioUrl: rawAudioUrl || rawStreamUrl,
-                streamUrl: rawStreamUrl,
-                imageUrl: rawImageUrl,
-                createdAt,
-                prompt: data.prompt || '',
-                articleHeadline: data.articleHeadline || '',
-                articleSummary: data.articleSummary || data.prompt || '',
-                articleSource: data.articleSource || '',
-                articleUrl: data.articleUrl || '',
-                articleContent: data.articleContent || '',
-                taskIds: storedTaskIds,
-                primaryTaskId,
-              };
-            })
-            .filter((song) => Boolean(song.audioUrl));
-
-          if (!songs.length) {
-            currentSongId = null;
-            songsCache = [];
-            showListEmptyState('songList', 'No Suno songs have been generated yet. Be the first to spin one!');
-            resetNowPlaying();
-            return;
-          }
-
-          renderSongList(songs);
-
-          const selected = currentSongId
-            ? songs.find((entry) => entry.id === currentSongId)
-            : null;
-
-          if (selected) {
-            setCurrentSong(selected);
-          } else {
-            setCurrentSong(songs[0]);
-          }
-        },
-        (error) => {
-          console.error('Failed to load songs from Firebase:', error);
-          showListEmptyState('songList', 'Unable to load recent spins right now.');
-        },
-      );
-    }
-
-    async function loadHeadlines() {
-      const headlineList = document.getElementById('headlineList');
-      if (headlineList) {
-        headlineList.innerHTML = '<li class="empty-state">Loading headlines…</li>';
-      }
-
-      try {
-        const response = await fetch('/api/news-headlines');
-        const payload = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          const message = payload?.error || 'Unable to fetch the latest headlines.';
-          throw new Error(message);
-        }
-
-        const stories = Array.isArray(payload?.stories) ? payload.stories : [];
-
-        if (!stories.length) {
-          showListEmptyState('headlineList', 'No headlines are available right now. Please check back soon.');
-          updateStatus('Headlines are unavailable right now.');
-          return;
-        }
-
-        setHeadlines(stories);
-      } catch (error) {
-        console.error('Unable to load headlines:', error);
-        showListEmptyState('headlineList', 'We could not load the latest headlines. Please try again later.');
-        updateStatus(error.message || 'Unable to load headlines right now.');
-        resetNowPlaying();
-      }
-    }
-
-    function populateFromSuno(song) {
-      const audio = document.getElementById('audioPlayer');
-      const source = document.getElementById('audioSource');
-      const title = document.getElementById('songTitle');
-      const meta = document.getElementById('songMeta');
-      const articlePanel = document.getElementById('songArticle');
-      const lyricsPanel = document.getElementById('songLyrics');
-      const tag = document.getElementById('songTag');
-
-      const createdAt = song.createdAt instanceof Date ? song.createdAt : new Date();
-      const metaPieces = [];
-      if (song.sunoTitle) metaPieces.push(`Suno: ${song.sunoTitle}`);
-      if (song.articleSource) metaPieces.push(song.articleSource);
-      const formatted = formatDateTime(createdAt);
-      if (formatted) metaPieces.push(formatted);
-
-      title.textContent = song.articleHeadline || song.sunoTitle || 'Daily Spin (Suno)';
-      meta.textContent = metaPieces.join(' — ') || 'Generated';
-
-      if (articlePanel) {
-        const articlePieces = [];
-        if (song.articleHeadline) {
-          articlePieces.push(song.articleHeadline);
-        }
-        if (song.articleContent) {
-          articlePieces.push(song.articleContent);
-        } else if (song.articleSummary) {
-          articlePieces.push(song.articleSummary);
-        }
-        articlePanel.textContent =
-          articlePieces.join('\n\n') || 'Your Suno track is ready. Enjoy!';
-      }
-
-      if (lyricsPanel) {
-        const lyricsText = (song.lyrics || song.prompt || '').trim();
-        lyricsPanel.textContent = lyricsText || 'Lyrics were not provided for this spin.';
-      }
-      const playableSrc = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
-      source.src = playableSrc;
-      audio.load();
-      if (playableSrc) {
-        audio.play().catch(() => {});
-      }
-
-      tag.textContent = 'Now Playing';
-      tag.style.background = 'rgba(245, 158, 11, 0.18)';
-      tag.style.color = 'var(--accent)';
-
-      currentSongId = null;
-      syncMobileNowPlayingBar();
-    }
-
-    async function pollForAudioIds(
-      { taskIds = [], clipIds = [] },
-      { timeoutMs = 180000, intervalMs = 5000, requireFinalAudioHost = false } = {},
-    ) {
-      const start = Date.now();
-      while (Date.now() - start < timeoutMs) {
-        const params = clipIds.length
-          ? `clip_ids=${encodeURIComponent(clipIds.join(','))}`
-          : `task_ids=${encodeURIComponent(taskIds.join(','))}`;
-
-        try {
-
-          const r = await fetch(`/api/song-status?${params}`);
-          if (!r.ok) {
-            await new Promise(res => setTimeout(res, intervalMs));
-            continue;
-          }
-
-          const { data = [] } = await r.json();
-          const ready = data.find((d) => d && d.audio_url);
-          if (ready) {
-            if (requireFinalAudioHost) {
-              const hasFinalState = isFinalSunoState(ready.state);
-              const hostNeedsMigration = isMigratingAudioHost(ready.audio_url);
-              if (!hasFinalState || hostNeedsMigration) {
-                await new Promise((res) => setTimeout(res, intervalMs));
-                continue;
-              }
-            }
-
-            return ready;
-          }
-
-
-        } catch (e) {
-          await new Promise((res) => setTimeout(res, intervalMs));
-          continue;
-        }
-      }
-      throw new Error('Timed out waiting for Suno audio.');
-    }
-
-    async function saveGeneratedSong(song) {
-      await initFirebase();
-      if (!db) throw new Error('Firebase is not available.');
-
-      if (!song) {
-        throw new Error('Suno did not return an audio URL to save.');
-      }
+    async function saveGeneratedSong(song){
+      if(!db) throw new Error('Firebase is not available.');
+      if(!song) throw new Error('Suno did not return an audio URL to save.');
 
       const sanitizedStreamUrl = sanitizeAudioUrl(song?.streamUrl || '');
-      const sanitizedFinalUrl = sanitizeAudioUrl(song?.audioUrl || '');
+      const sanitizedFinalUrl  = sanitizeAudioUrl(song?.audioUrl  || '');
       const persistedAudioUrl = sanitizedFinalUrl || sanitizedStreamUrl;
+      if(!persistedAudioUrl) throw new Error('Suno did not return an audio URL to save.');
 
-      if (!persistedAudioUrl) {
-        throw new Error('Suno did not return an audio URL to save.');
-      }
-
-      const songsRef = collection(db, 'spins');
-      const generatedIso = song.generatedAtIso || (song.createdAt instanceof Date
-        ? song.createdAt.toISOString()
-        : new Date().toISOString());
+      const songsRef = collection(db,'spins');
+      const generatedIso = song.generatedAtIso || (song.createdAt instanceof Date ? song.createdAt.toISOString() : new Date().toISOString());
       const sanitizedImageUrl = sanitizeImageUrl(song?.imageUrl || '');
-      const normalizedTaskIds = Array.isArray(song?.taskIds)
-        ? Array.from(
-            new Set(
-              song.taskIds
-                .map((value) => (typeof value === 'string' ? value.trim() : ''))
-                .filter(Boolean),
-            ),
-          )
-        : [];
-      const primaryTaskId = typeof song?.primaryTaskId === 'string'
-        ? song.primaryTaskId.trim()
-        : normalizedTaskIds[0] || '';
+      const normalizedTaskIds = Array.isArray(song?.taskIds) ? Array.from(new Set(song.taskIds.map(v=>typeof v==='string'?v.trim():'').filter(Boolean))) : [];
+      const primaryTaskId = typeof song?.primaryTaskId==='string' ? song.primaryTaskId.trim() : normalizedTaskIds[0] || '';
 
       const payload = {
         sunoTitle: song.sunoTitle || song.title || 'Daily Spin (Suno)',
@@ -1868,187 +840,221 @@
         createdAt: serverTimestamp(),
         generatedAtIso: generatedIso,
       };
-
       return addDoc(songsRef, payload);
     }
 
-    async function finalizeSongAudio({ docRef, taskIds = [], clipIds = [], streamUrl, songRecord }) {
-      if (!docRef) return;
-
-      const hasTaskIds = Array.isArray(taskIds) && taskIds.length > 0;
-      const hasClipIds = Array.isArray(clipIds) && clipIds.length > 0;
-      if (!hasTaskIds && !hasClipIds) {
-        return;
-      }
-
-      try {
-        const finalClip = await pollForAudioIds(
-          { taskIds, clipIds },
-          { timeoutMs: 240000, intervalMs: 10000, requireFinalAudioHost: true },
-        );
-
+    async function finalizeSongAudio({docRef, taskIds=[], clipIds=[], streamUrl, songRecord}){
+      if(!docRef || (!taskIds.length && !clipIds.length)) return;
+      try{
+        const finalClip = await pollForAudioIds({taskIds, clipIds},{timeoutMs:240000, intervalMs:10000, requireFinalAudioHost:true});
         const finalUrl = sanitizeAudioUrl(finalClip?.audio_url || '');
         const finalImageUrl = sanitizeImageUrl(finalClip?.image_url || '');
-        if ((!finalUrl || finalUrl === streamUrl) && !finalImageUrl) {
-          return;
-        }
+        if((!finalUrl || finalUrl===streamUrl) && !finalImageUrl) return;
 
-        const updatePayload = {};
-        if (finalUrl && finalUrl !== streamUrl) {
-          updatePayload.audioUrl = finalUrl;
-        }
-        if (finalImageUrl) {
-          updatePayload.imageUrl = finalImageUrl;
-        }
+        const updatePayload={};
+        if(finalUrl && finalUrl!==streamUrl) updatePayload.audioUrl=finalUrl;
+        if(finalImageUrl) updatePayload.imageUrl=finalImageUrl;
+        if(Object.keys(updatePayload).length) await updateDoc(docRef, updatePayload);
 
-        if (Object.keys(updatePayload).length === 0) {
-          return;
+        if(songRecord){
+          if(finalUrl && finalUrl!==streamUrl) songRecord.audioUrl = finalUrl;
+          if(finalImageUrl) songRecord.imageUrl = finalImageUrl;
         }
+      }catch(err){
+        // fallback: allow host migration if needed
+        const fb = await pollForAudioIds({taskIds, clipIds},{timeoutMs:60000, intervalMs:10000}).catch(()=>null);
+        if(!fb || !isFinalSunoState(fb.state)) throw err;
+        const migratedUrl = sanitizeAudioUrl(fb.audio_url||'', {migrateHost:true});
+        const migratedImg = sanitizeImageUrl(fb.image_url||'');
+        if((!migratedUrl || migratedUrl===streamUrl) && !migratedImg) throw err;
 
+        const updatePayload={};
+        if(migratedUrl && migratedUrl!==streamUrl) updatePayload.audioUrl=migratedUrl;
+        if(migratedImg) updatePayload.imageUrl=migratedImg;
         await updateDoc(docRef, updatePayload);
 
-        if (songRecord) {
-          if (finalUrl && finalUrl !== streamUrl) {
-            songRecord.audioUrl = finalUrl;
-          }
-          if (finalImageUrl) {
-            songRecord.imageUrl = finalImageUrl;
-          }
-        }
-      } catch (error) {
-        const fallbackClip = await pollForAudioIds(
-          { taskIds, clipIds },
-          { timeoutMs: 60000, intervalMs: 10000 },
-        ).catch(() => null);
-
-        if (!fallbackClip || !isFinalSunoState(fallbackClip.state)) {
-          throw error;
-        }
-
-        const migratedUrl = sanitizeAudioUrl(fallbackClip.audio_url || '', { migrateHost: true });
-        const migratedImageUrl = sanitizeImageUrl(fallbackClip.image_url || '');
-        if ((!migratedUrl || migratedUrl === streamUrl) && !migratedImageUrl) {
-          throw error;
-        }
-
-        const updatePayload = {};
-        if (migratedUrl && migratedUrl !== streamUrl) {
-          updatePayload.audioUrl = migratedUrl;
-        }
-        if (migratedImageUrl) {
-          updatePayload.imageUrl = migratedImageUrl;
-        }
-
-        await updateDoc(docRef, updatePayload);
-
-        if (songRecord) {
-          if (migratedUrl && migratedUrl !== streamUrl) {
-            songRecord.audioUrl = migratedUrl;
-          }
-          if (migratedImageUrl) {
-            songRecord.imageUrl = migratedImageUrl;
-          }
+        if(songRecord){
+          if(migratedUrl && migratedUrl!==streamUrl) songRecord.audioUrl=migratedUrl;
+          if(migratedImg) songRecord.imageUrl=migratedImg;
         }
       }
     }
 
-    document.addEventListener('DOMContentLoaded', async () => {
-      generateSongButton = document.getElementById('generateSongButton');
-      if (generateSongButton) {
-        generateSongButton.addEventListener('click', () => {
-          if (!selectedStory) {
-            updateStatus('Select a headline to read the story before generating a song.');
-            return;
-          }
-          generateSongForHeadline(selectedStory);
-        });
-      }
+    async function subscribeToSongs(){
+      if(!db) return;
+      if(unsubscribeSongs) unsubscribeSongs();
 
-      document.querySelectorAll('[data-role="player-tab"]').forEach((button) => {
-        button.addEventListener('click', () => {
-          setActiveTab(button.dataset.tab);
-        });
+      const songsRef=collection(db,'spins');
+      const q=query(songsRef, orderBy('createdAt','desc'), limit(50));
+
+      unsubscribeSongs = onSnapshot(q, (snap)=>{
+        const songs = snap.docs
+          .map(doc=>{
+            const d=doc.data();
+            const createdAt = (d.createdAt && typeof d.createdAt.toDate==='function') ? d.createdAt.toDate()
+                             : d.generatedAtIso ? new Date(d.generatedAtIso) : null;
+
+            const rawAudioUrl = sanitizeAudioUrl(d.audioUrl);
+            const rawStreamUrl = sanitizeAudioUrl(d.streamUrl);
+            const img = sanitizeImageUrl(d.imageUrl || d.image_url || '');
+            const storedTaskIds = Array.isArray(d.taskIds) ? d.taskIds.map(v=>typeof v==='string'?v.trim():'').filter(Boolean) : [];
+            const primaryTaskId = typeof d.primaryTaskId==='string' ? d.primaryTaskId.trim() : storedTaskIds[0] || '';
+
+            return {
+              id: doc.id,
+              title: d.title || d.sunoTitle || 'Daily Spin (Suno)',
+              sunoTitle: d.sunoTitle || d.title || 'Daily Spin (Suno)',
+              artist: d.artist || d.sunoArtist || 'Suno AI',
+              sunoArtist: d.sunoArtist || d.artist || 'Suno AI',
+              lyrics: d.lyrics || d.prompt || '',
+              audioUrl: rawAudioUrl || rawStreamUrl,
+              streamUrl: rawStreamUrl,
+              imageUrl: img,
+              createdAt,
+              prompt: d.prompt || '',
+              articleHeadline: d.articleHeadline || '',
+              articleSummary: d.articleSummary || d.prompt || '',
+              articleSource: d.articleSource || '',
+              articleUrl: d.articleUrl || '',
+              articleContent: d.articleContent || '',
+              taskIds: storedTaskIds,
+              primaryTaskId
+            };
+          })
+          .filter(s=>Boolean(s.audioUrl));
+
+        if(!songs.length){
+          currentSongId=null; songsCache=[];
+          showListEmptyState('songList','No Suno songs have been generated yet. Be the first to spin one!');
+          resetNowPlaying(); return;
+        }
+
+        renderSongList(songs);
+        const selected = currentSongId ? songs.find(s=>s.id===currentSongId) : null;
+        setCurrentSong(selected || songs[0]);
+      }, (err)=>{
+        console.error('Firebase load error:',err);
+        showListEmptyState('songList','Unable to load recent spins right now.');
+      });
+    }
+
+    function renderSongList(songs){
+      songsCache=songs;
+      const list=$('#songList'), tpl=$('#songItemTemplate');
+      if(!songs.length){ showListEmptyState('songList','No Suno songs have been generated yet. Be the first to spin one!'); return }
+      list.innerHTML='';
+      songs.forEach(song=>{
+        const node=tpl.content.cloneNode(true);
+        const btn=node.querySelector('button');
+        const title=node.querySelector('.song-title');
+        const meta=node.querySelector('.song-meta');
+        const thumb=node.querySelector('.song-thumb');
+        const img=thumb.querySelector('img');
+        const ph=thumb.querySelector('.song-thumb-placeholder');
+
+        const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
+        title.textContent = displayTitle;
+
+        const metaPieces=[];
+        if(song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
+        if(song.articleSource) metaPieces.push(song.articleSource);
+        const ts=formatDateTime(song.createdAt); if(ts) metaPieces.push(ts);
+        meta.textContent = metaPieces.filter(Boolean).join(' • ');
+
+        const thumbUrl=sanitizeImageUrl(song.imageUrl || song.image_url || '');
+        ph.textContent = (displayTitle || 'AI').trim().slice(0,2).toUpperCase() || 'AI';
+        if(thumbUrl){ img.src=thumbUrl; thumb.classList.add('has-image') } else { img.removeAttribute('src'); thumb.classList.remove('has-image') }
+
+        btn.dataset.id=song.id || '';
+        btn.classList.toggle('active', !!(song.id && song.id===currentSongId));
+        btn.addEventListener('click', ()=> setCurrentSong(song));
+
+        list.appendChild(node);
+      });
+    }
+
+    function setCurrentSong(song){
+      if(!song){ resetNowPlaying(); return }
+      currentSongId = song.id || null;
+
+      const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
+      $('#songTitle').textContent = displayTitle;
+
+      const metaPieces=[];
+      if(song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
+      if(song.articleSource) metaPieces.push(song.articleSource);
+      const ts=formatDateTime(song.createdAt); if(ts) metaPieces.push(ts);
+      $('#songMeta').textContent = metaPieces.join(' — ') || 'Generated';
+
+      const articleParts=[];
+      if(song.articleHeadline) articleParts.push(song.articleHeadline);
+      if(song.articleContent) articleParts.push(song.articleContent); else if(song.articleSummary) articleParts.push(song.articleSummary);
+      $('#songArticle').textContent = articleParts.join('\n\n') || 'Article details are unavailable for this spin.';
+      $('#songLyrics').textContent = (song.lyrics || song.prompt || '').trim() || 'Lyrics were not provided for this spin.';
+
+      const playable=getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
+      const currentSrc = $('#audioSource').getAttribute('src') || '';
+      if(playable !== currentSrc){
+        $('#audioSource').src = playable; $('#audioPlayer').load();
+        if(playable) $('#audioPlayer').play().catch(()=>{});
+      }else if(playable){ $('#audioPlayer').play().catch(()=>{}) }
+
+      const tag=$('#songTag');
+      const isNewest = songsCache[0]?.id === song.id;
+      if(isNewest){ tag.textContent='Now Playing'; tag.style.background='rgba(245,158,11,.18)'; tag.style.color='var(--accent)' }
+      else{ tag.textContent='From the Archives'; tag.style.background='rgba(148,163,184,.2)'; tag.style.color='var(--text)' }
+
+      $$('[data-role="song-item"]').forEach(b=> b.classList.toggle('active', b.dataset.id===(song.id||'')));
+
+      updateDockState();
+    }
+
+    /* ---------- Boot ---------- */
+    document.addEventListener('DOMContentLoaded', async ()=>{
+      generateSongButton = $('#generateSongButton');
+      generateSongButton?.addEventListener('click', ()=>{
+        if(!selectedStory){ updateStatus('Select a headline to read the story before generating a song.'); return }
+        generateSongForHeadline(selectedStory);
+      });
+
+      $$('[data-role="player-tab"]').forEach(btn=>{
+        btn.addEventListener('click', ()=> setActiveTab(btn.dataset.tab));
       });
       setActiveTab(activeContentTab);
 
       const navButtons = document.querySelectorAll('[data-role="mobile-nav"]');
-      if (navButtons.length) {
-        navButtons.forEach((button) => {
-          button.addEventListener('click', () => {
-            setActiveMobileSection(button.dataset.target);
-          });
-        });
-        setActiveMobileSection('headlines');
-      }
-
-      const mobileToggle = document.getElementById('mobileNowPlayingToggle');
-      if (mobileToggle) {
-        mobileToggle.addEventListener('click', () => {
-          if (window.matchMedia('(max-width: 860px)').matches) {
-            toggleMobilePlayer();
-          }
-        });
-      }
-
-      const mobileScrim = document.getElementById('mobilePlayerScrim');
-      if (mobileScrim) {
-        mobileScrim.addEventListener('click', () => {
-          toggleMobilePlayer(false);
-        });
-      }
-
-      const mobilePlayButton = document.getElementById('mobilePlayButton');
-      const audio = document.getElementById('audioPlayer');
-      if (mobilePlayButton && audio) {
-        mobilePlayButton.addEventListener('click', () => {
-          if (audio.paused || audio.ended) {
-            audio.play().catch(() => {});
-          } else {
-            audio.pause();
-          }
-        });
-      }
-
-      if (audio) {
-        ['play', 'pause', 'ended', 'loadeddata'].forEach((eventName) => {
-          audio.addEventListener(eventName, () => {
-            syncMobilePlayButton();
-          });
-        });
-      }
-
-      const mediaQuery = window.matchMedia('(max-width: 860px)');
-      if (typeof mediaQuery.addEventListener === 'function') {
-        mediaQuery.addEventListener('change', (event) => {
-          if (!event.matches) {
-            toggleMobilePlayer(false);
-          }
-        });
-      } else if (typeof mediaQuery.addListener === 'function') {
-        mediaQuery.addListener((event) => {
-          if (!event.matches) {
-            toggleMobilePlayer(false);
-          }
-        });
-      }
-
-      document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && document.body.classList.contains('mobile-player-open')) {
-          toggleMobilePlayer(false);
-        }
+      navButtons.forEach(btn=>{
+        btn.addEventListener('click', ()=> setActiveMobileSection(btn.dataset.target));
       });
+      setActiveMobileSection('headlines');
 
-      showListEmptyState('songList', 'Loading recent spins…');
+      const audio=$('#audioPlayer');
+
+      const mq=window.matchMedia('(max-width: 860px)');
+
+      showListEmptyState('songList','Loading recent spins…');
       resetNowPlaying();
-      loadHeadlines();
+      updateDockState();
 
-      try {
-        await initFirebase();
-        await subscribeToSongs();
-      } catch (error) {
-        console.error('Failed to initialise Firebase:', error);
-        showListEmptyState('songList', 'Unable to load recent spins right now.');
-      }
+      // Headlines
+      (async ()=>{
+        const list=$('#headlineList'); if(list) list.innerHTML='<li class="empty-state">Loading headlines…</li>';
+        try{
+          const r=await fetch('/api/news-headlines'); const payload=await r.json().catch(()=>({}));
+          if(!r.ok) throw new Error(payload?.error || 'Unable to fetch the latest headlines.');
+          const stories = Array.isArray(payload?.stories) ? payload.stories : [];
+          if(!stories.length){ showListEmptyState('headlineList','No headlines are available right now. Please check back soon.'); updateStatus('Headlines are unavailable right now.'); return }
+          setHeadlines(stories);
+        }catch(err){
+          showListEmptyState('headlineList','We could not load the latest headlines. Please try again later.');
+          updateStatus(err.message || 'Unable to load headlines right now.');
+          resetNowPlaying();
+        }
+      })();
+
+      // Firebase
+      try{ await initFirebase(); await subscribeToSongs() }
+      catch(e){ console.error('Firebase init error:', e); showListEmptyState('songList','Unable to load recent spins right now.') }
     });
   </script>
 </body>
