@@ -80,6 +80,47 @@
     }
     .sidebar-section p{ font-size:.9rem; color:var(--muted) }
 
+    /* Hidden on mobile; visible desktop-only */
+    .desktop-sidebar-tabs { display: none; }
+
+    @media (min-width: 861px) {
+      .desktop-sidebar-tabs {
+        display: inline-flex;
+        gap: .5rem;
+        padding: .35rem;
+        background: rgba(148,163,184,.15);
+        border-radius: 999px;
+        align-self: flex-start;
+        margin-bottom: .75rem;
+      }
+      .desktop-sidebar-tab {
+        background: transparent;
+        border: none;
+        color: var(--muted);
+        padding: .45rem 1rem;
+        border-radius: 999px;
+        font-weight: 600;
+        letter-spacing: .01em;
+        cursor: pointer;
+        transition: background .2s ease, color .2s ease, transform .2s ease;
+      }
+      .desktop-sidebar-tab.active {
+        background: rgba(15,23,42,.8);
+        color: var(--text);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+      }
+
+      /* Desktop: only show the active sidebar section */
+      .sidebar .sidebar-section { display: none; }
+      .sidebar .sidebar-section.active { display: flex; }
+
+      /* Keep your existing desktop layout constraints */
+      .headline-list, .song-list {
+        max-height: 30vh;
+      }
+    }
+
+
     /* Lists */
     .headline-list,.song-list{
       list-style:none;
@@ -325,6 +366,29 @@
   <div class="app-shell">
     <!-- Sidebar -->
     <aside class="sidebar">
+      <nav class="desktop-sidebar-tabs" role="tablist" aria-label="Sidebar sections (desktop)">
+        <button
+          type="button"
+          class="desktop-sidebar-tab active"
+          data-role="desktop-sidebar-tab"
+          data-target="headlines"
+          role="tab"
+          aria-selected="true"
+        >
+          Headlines
+        </button>
+        <button
+          type="button"
+          class="desktop-sidebar-tab"
+          data-role="desktop-sidebar-tab"
+          data-target="recent"
+          role="tab"
+          aria-selected="false"
+        >
+          Recent Spins
+        </button>
+      </nav>
+
       <section class="sidebar-section" data-section="headlines">
         <header>
           <h2>Top Headlines</h2>
@@ -492,6 +556,23 @@
       if(typeof disabled==='boolean') generateSongButton.disabled = disabled;
       if(typeof text==='string') generateSongButton.textContent = text;
     };
+
+    function setActiveDesktopSidebar(section) {
+      const normalized = section === 'recent' ? 'recent' : 'headlines';
+
+      // Update tab button states
+      document.querySelectorAll('[data-role="desktop-sidebar-tab"]').forEach(btn => {
+        const on = btn.dataset.target === normalized;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+
+      // Show only the matching section in the sidebar
+      document.querySelectorAll('.sidebar .sidebar-section').forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.section === normalized);
+      });
+    }
+
 
     /* ---------- Tabs / Mobile UI ---------- */
     function setActiveTab(tab){
@@ -1016,6 +1097,29 @@
         if(!selectedStory){ updateStatus('Select a headline to read the story before generating a song.'); return }
         generateSongForHeadline(selectedStory);
       });
+
+      // Desktop sidebar tabs
+      document.querySelectorAll('[data-role="desktop-sidebar-tab"]').forEach(btn => {
+        btn.addEventListener('click', () => setActiveDesktopSidebar(btn.dataset.target));
+      });
+
+      // Initialize default desktop view to "headlines"
+      setActiveDesktopSidebar('headlines');
+
+      // Keep desktop tabs only affecting desktop; when switching to mobile, your mobile code takes over
+      const desktopMQ = window.matchMedia('(min-width: 861px)');
+      desktopMQ.addEventListener?.('change', e => {
+        if (e.matches) {
+          // entering desktop — ensure a single section is active
+          setActiveDesktopSidebar(
+            document.querySelector('[data-role="desktop-sidebar-tab"].active')?.dataset.target || 'headlines'
+          );
+        } else {
+          // entering mobile — show the mobile view’s default (your code already handles this)
+          // No action required here.
+        }
+      });
+
 
       $$('[data-role="player-tab"]').forEach(btn=>{
         btn.addEventListener('click', ()=> setActiveTab(btn.dataset.tab));
