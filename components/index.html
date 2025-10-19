@@ -804,6 +804,22 @@
       updateGenerateButton({disabled:true, text:'Loading Article…'});
       updateStatus('Fetching the full article…');
       fetchAndDisplayArticle(story);
+      // if mobile, switch to the Now Playing tab
+      if (window.innerWidth <= 860) {
+        document.querySelectorAll('.mobile-bottom-nav__button').forEach(b => 
+          b.classList.remove('active')
+        );
+        const nowPlayingBtn = document.querySelector(
+          '.mobile-bottom-nav__button[data-section="player"]'
+        );
+        nowPlayingBtn?.classList.add('active');
+
+        // toggle visible panels
+        document.querySelectorAll('.sidebar-section, .player-panel').forEach(p => 
+          p.classList.remove('active')
+        );
+        document.querySelector('.player-panel')?.classList.add('active');
+      }
     }
 
     async function pollForAudioIds({taskIds=[], clipIds=[]}, {timeoutMs=180000, intervalMs=5000, requireFinalAudioHost=false}={}){
