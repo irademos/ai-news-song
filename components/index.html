@@ -502,6 +502,7 @@
     /* ---------- Utilities ---------- */
     const PROXYABLE_AUDIO_HOSTS = ['audiopipe.suno.ai','cdn.suno.ai','cdn1.suno.ai','cdn2.suno.ai','cdn3.suno.ai'];
     const SUNO_AUDIO_HOST_MIGRATIONS = new Map([['audiopipe.suno.ai','cdn1.suno.ai']]);
+    const AUDIOPIPE_HOST_HINT = 'audiopipe';
 
     const isFinalSunoState = s => typeof s==='string' && ['complete','completed','succeeded'].includes(s.trim().toLowerCase());
     const sanitizeImageUrl = v => {
@@ -518,6 +519,7 @@
       }catch{ return t }
     };
     const sanitizeAudioUrl = (v,opts)=>normalizeSunoAudioUrl(v,opts);
+    const hasAudioPipeHost = url => typeof url==='string' && url.toLowerCase().includes(AUDIOPIPE_HOST_HINT);
     const needsAudioProxy = url => { try{ const h=new URL(url).hostname.toLowerCase(); return PROXYABLE_AUDIO_HOSTS.some(a=>h===a||h.endsWith('.'+a)) }catch{ return false } };
     const getPlayableAudioUrl = raw => {
       const s = sanitizeAudioUrl(raw); if(!s) return '';
@@ -1054,6 +1056,81 @@
       });
     }
 
+    async function resolveSongAudioUrl(song){
+      if(!song) return '';
+
+      if(song._resolvedFinalAudioUrl && !hasAudioPipeHost(song._resolvedFinalAudioUrl)){
+        return song._resolvedFinalAudioUrl;
+      }
+
+      const raw = sanitizeAudioUrl(song.audioUrl || song.streamUrl || '');
+      if(!raw) return '';
+
+      if(!hasAudioPipeHost(raw)){
+        song._resolvedFinalAudioUrl = raw;
+        return raw;
+      }
+
+      if(song._resolvingAudioPromise){
+        try{ return await song._resolvingAudioPromise }catch{ return raw }
+      }
+
+      const normalizedTaskIds = (()=>{
+        const ids=[];
+        const primary = typeof song.primaryTaskId==='string' ? song.primaryTaskId.trim() : '';
+        if(primary) ids.push(primary);
+        if(Array.isArray(song.taskIds)){
+          for(const id of song.taskIds){
+            if(typeof id==='string'){
+              const trimmed=id.trim();
+              if(trimmed) ids.push(trimmed);
+            }
+          }
+        }
+        return Array.from(new Set(ids.filter(Boolean)));
+      })();
+
+      if(!normalizedTaskIds.length){
+        song._resolvedFinalAudioUrl = raw;
+        return raw;
+      }
+
+      const resolver = (async ()=>{
+        try{
+          const qs = encodeURIComponent(normalizedTaskIds.join(','));
+          const r = await fetch(`/api/song-status?task_ids=${qs}`);
+          if(!r.ok) throw new Error('Unable to fetch updated Suno audio.');
+          const payload = await r.json().catch(()=>({}));
+          const rows = Array.isArray(payload?.data) ? payload.data : [];
+
+          const preferred = rows.find(row=>row && row.audio_url && !hasAudioPipeHost(row.audio_url));
+          const fallback = rows.find(row=>row && row.audio_url);
+          const resolved = sanitizeAudioUrl((preferred || fallback || {}).audio_url || '', {migrateHost:true});
+
+          if(resolved){
+            song.audioUrl = resolved;
+            song._resolvedFinalAudioUrl = resolved;
+            const idx = songsCache.findIndex(s=>s && s.id===song.id);
+            if(idx>=0){
+              songsCache[idx].audioUrl = resolved;
+              songsCache[idx]._resolvedFinalAudioUrl = resolved;
+            }
+            return resolved;
+          }
+        }catch(err){
+          console.warn('Failed to resolve Suno audio URL:', err);
+        }
+        return raw;
+      })();
+
+      song._resolvingAudioPromise = resolver;
+      try{
+        return await resolver;
+      }finally{
+        delete song._resolvingAudioPromise;
+      }
+    }
+
     function setCurrentSong(song){
       if(!song){ resetNowPlaying(); return }
       currentSongId = song.id || null;
@@ -1073,12 +1150,27 @@
       $('#songArticle').textContent = articleParts.join('\n\n') || 'Article details are unavailable for this spin.';
       $('#songLyrics').textContent = (song.lyrics || song.prompt || '').trim() || 'Lyrics were not provided for this spin.';
 
-      const playable=getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
+      const rawAudio = sanitizeAudioUrl(song.audioUrl || song.streamUrl || '');
+      const playable=getPlayableAudioUrl(rawAudio);
       const currentSrc = $('#audioSource').getAttribute('src') || '';
       if(playable !== currentSrc){
         $('#audioSource').src = playable; $('#audioPlayer').load();
         if(playable) $('#audioPlayer').play().catch(()=>{});
       }else if(playable){ $('#audioPlayer').play().catch(()=>{}) }
+
+      if(hasAudioPipeHost(rawAudio)){
+        resolveSongAudioUrl(song).then(finalRaw=>{
+          if(!finalRaw || hasAudioPipeHost(finalRaw)) return;
+          if((song.id || null)!==currentSongId) return;
+          const finalPlayable = getPlayableAudioUrl(finalRaw);
+          const current = $('#audioSource').getAttribute('src') || '';
+          if(finalPlayable && finalPlayable!==current){
+            $('#audioSource').src = finalPlayable;
+            $('#audioPlayer').load();
+            $('#audioPlayer').play().catch(()=>{});
+          }
+        }).catch(err=>console.warn('Audio migration failed:', err));
+      }
 
       const tag=$('#songTag');
       const isNewest = songsCache[0]?.id === song.id;
