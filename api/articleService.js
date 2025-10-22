@@ -91,20 +91,17 @@ function mergeParagraphs(paragraphs) {
 }
 
 async function fetchArticleContent(url) {
-  console.log("url:", url);
   if (!url || typeof url !== 'string') {
     throw new Error('A valid article URL must be provided.');
   }
 
   const response = await fetch(url, { headers: DEFAULT_HEADERS });
-  console.log("res:", response);
   if (!response.ok) {
-    
+
     throw new Error(`Failed to retrieve article (status ${response.status})`);
   }
 
   const html = await response.text();
-  console.log("html:", html);
   const blocks = extractCandidateBlocks(html);
 
   for (const block of blocks) {
