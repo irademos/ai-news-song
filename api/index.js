@@ -5,6 +5,8 @@ const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
 
+const MIN_ARTICLE_CHAR_LENGTH = 2000;
+
 const SUNO_PROMPT_MAX_CHARS = 3000;
 const OPEN_ROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const LYRIC_MODELS = [
@@ -183,6 +185,28 @@ app.get('/api/firebase-config', (_req, res) => {
   res.json(config);
 });
 
+async function resolveArticleLength(link, cache) {
+  if (!link) {
+    return 0;
+  }
+
+  if (cache.has(link)) {
+    return cache.get(link);
+  }
+
+  let length = 0;
+  try {
+    const content = await fetchArticleContent(link);
+    length = typeof content === 'string' ? content.length : 0;
+  } catch (error) {
+    console.warn(`Skipping story due to article fetch failure (${link}):`, error.message);
+    length = 0;
+  }
+
+  cache.set(link, length);
+  return length;
+}
+
 app.get('/api/news-headlines', async (req, res) => {
   const limit = 120;//Math.max(1, Math.min(20, Number.parseInt(req.query.limit, 10) || 8));
 
@@ -190,18 +214,26 @@ app.get('/api/news-headlines', async (req, res) => {
     const stories = await fetchTopNews(limit);
     const seen = new Set();
     const uniqueStories = [];
+    const articleLengthCache = new Map();
 
     for (const story of stories) {
-      if (!story?.headline) continue;
+      if (!story?.headline || !story?.link) continue;
       const key = story.link || `${story.source || 'source'}:${story.headline}`;
       if (seen.has(key)) continue;
       seen.add(key);
+
+      const length = await resolveArticleLength(story.link, articleLengthCache);
+      if (length < MIN_ARTICLE_CHAR_LENGTH) {
+        continue;
+      }
+
       uniqueStories.push({
         headline: story.headline,
         summary: story.summary || '',
         source: story.source || '',
         link: story.link || '',
       });
+
       if (uniqueStories.length >= limit) break;
     }
 
