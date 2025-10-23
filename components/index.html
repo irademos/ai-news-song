@@ -257,9 +257,44 @@
       margin-top:auto; padding-top:1.25rem; display:flex; flex-direction:column; gap:.75rem;
       border-top:1px solid rgba(148,163,184,.15);
     }
+    .generate-controls{
+      display:flex;
+      flex-wrap:wrap;
+      gap:.75rem;
+      align-items:flex-end;
+    }
+    .generate-field{
+      display:flex;
+      flex-direction:column;
+      gap:.35rem;
+      flex:1 1 180px;
+      min-width:150px;
+      font-size:.85rem;
+      color:var(--muted);
+    }
+    .generate-field select,
+    .generate-field input{
+      background:rgba(15,23,42,.85);
+      border:1px solid rgba(148,163,184,.3);
+      color:var(--text);
+      border-radius:12px;
+      padding:.6rem .75rem;
+      font-size:.95rem;
+      width:100%;
+      transition:border-color .2s ease, box-shadow .2s ease;
+    }
+    .generate-field select:focus,
+    .generate-field input:focus{
+      border-color:var(--accent);
+      box-shadow:0 0 0 3px rgba(245,158,11,.25);
+      outline:none;
+    }
     .generate-song-status{ font-size:.9rem; color:var(--muted); min-height:1.4em }
+    .generate-controls>button{
+      align-self:flex-end;
+    }
     .generate-song button{
-      align-self:flex-start; cursor:pointer;
+      cursor:pointer;
       background:var(--accent); color:#0b0f16; border:none;
       padding:.75rem 1.5rem; border-radius:999px; font-weight:600; letter-spacing:.02em;
       transition:transform .15s ease, box-shadow .2s ease;
@@ -486,7 +521,26 @@
       </div>
 
       <section class="generate-song">
-        <button type="button" id="generateSongButton" disabled>Generate Song</button>
+        <div class="generate-controls">
+          <label class="generate-field" for="genreSelect">
+            <span>Genre</span>
+            <select id="genreSelect" name="genreSelect">
+              <option value="">Select a genre (optional)</option>
+              <option value="pop">Pop</option>
+              <option value="rock">Rock</option>
+              <option value="hip-hop">Hip-Hop</option>
+              <option value="electronic">Electronic</option>
+              <option value="jazz">Jazz</option>
+              <option value="acoustic">Acoustic</option>
+              <option value="ambient">Ambient</option>
+            </select>
+          </label>
+          <label class="generate-field" for="customTagsInput">
+            <span>Custom tags</span>
+            <input id="customTagsInput" name="customTagsInput" type="text" placeholder="Comma-separated tags" autocomplete="off" />
+          </label>
+          <button type="button" id="generateSongButton" disabled>Generate Song</button>
+        </div>
         <p id="generateSongStatus" class="generate-song-status" aria-live="polite"></p>
       </section>
     </main>
@@ -593,7 +647,7 @@
     let songsCache=[], currentSongId=null, unsubscribeSongs=null;
     let headlinesCache=[], groupedHeadlines=new Map(), headlineViewMode='sources', selectedHeadlineSource=null;
     let currentHeadlineKey=null, selectedStory=null, latestArticleContent='', latestSummary='', isGenerating=false;
-    let generateSongButton=null, activeContentTab='article';
+    let generateSongButton=null, genreSelect=null, customTagsInput=null, activeContentTab='article';
 
     /* ---------- DOM Helpers ---------- */
     const $ = sel => document.querySelector(sel);
@@ -615,6 +669,21 @@
       if(!generateSongButton) return;
       if(typeof disabled==='boolean') generateSongButton.disabled = disabled;
       if(typeof text==='string') generateSongButton.textContent = text;
+    };
+    const getRequestedTags = ()=>{
+      const values=[];
+      const genreValue = genreSelect && typeof genreSelect.value==='string' ? genreSelect.value.trim() : '';
+      if(genreValue) values.push(genreValue);
+      const customValueRaw = customTagsInput && typeof customTagsInput.value==='string' ? customTagsInput.value : '';
+      if(customValueRaw){
+        const cleaned = customValueRaw
+          .split(',')
+          .map(part=>part.trim())
+          .filter(Boolean)
+          .join(', ');
+        if(cleaned) values.push(cleaned);
+      }
+      return values.join(', ').trim();
     };
 
     function setActiveDesktopSidebar(section) {
@@ -861,6 +930,7 @@
     function populateFromSuno(song){
       const createdAt = song.createdAt instanceof Date ? song.createdAt : new Date();
       const pieces=[]; if(song.sunoTitle) pieces.push(`Suno: ${song.sunoTitle}`); if(song.articleSource) pieces.push(song.articleSource);
+      if(song.tags) pieces.push(`Tags: ${song.tags}`);
       const ts=formatDateTime(createdAt); if(ts) pieces.push(ts);
 
       $('#songTitle').textContent = song.articleHeadline || song.sunoTitle || 'Daily Spin (Suno)';
@@ -886,10 +956,16 @@
       isGenerating=true; latestSummary=''; updateGenerateButton({disabled:true, text:'Generating…'});
       $('#audioSource').src=''; $('#audioPlayer').load();
 
+      const selectedTags = getRequestedTags();
+
       try{
-        const r=await fetch('/api/generate-song',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:story.link,headline:story.headline,source:story.source})});
+        const payload={url:story.link,headline:story.headline,source:story.source};
+        if(selectedTags) payload.tags = selectedTags;
+        const r=await fetch('/api/generate-song',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         const body=await r.json().catch(()=>({}));
         if(r.status!==202) throw new Error(body?.error || 'Failed to create a Suno generation task.');
+
+        const appliedTags = typeof body?.tags==='string' && body.tags.trim() ? body.tags.trim() : selectedTags;
 
         latestSummary = body.summary || body.prompt || story.summary || '';
 
@@ -900,7 +976,8 @@
         const taskIds = Array.isArray(body.task_ids) ? body.task_ids : [];
         const clipIds = Array.isArray(body.clip_ids) ? body.clip_ids : [];
         if(!taskIds.length && !clipIds.length) throw new Error('Suno did not return any task or clip identifiers.');
-        updateStatus('Song requested. Waiting for Suno to render…');
+        const waitMessage = appliedTags ? `Song requested with tags: ${appliedTags}. Waiting for Suno to render…` : 'Song requested. Waiting for Suno to render…';
+        updateStatus(waitMessage);
 
         const clip = await pollForAudioIds({taskIds, clipIds}, {timeoutMs:180000, intervalMs:15000});
         const createdAt = clip.created_at ? new Date(clip.created_at) : new Date();
@@ -932,6 +1009,7 @@
           articleSource: story.source || '',
           articleUrl: story.link || '',
           articleContent: latestArticleContent || '',
+          tags: appliedTags,
         };
 
         populateFromSuno(songRecord);
@@ -996,6 +1074,7 @@
         primaryTaskId,
         createdAt: serverTimestamp(),
         generatedAtIso: generatedIso,
+        tags: typeof song.tags==='string' ? song.tags.trim() : '',
       };
       return addDoc(songsRef, payload);
     }
@@ -1074,6 +1153,7 @@
               articleSource: d.articleSource || '',
               articleUrl: d.articleUrl || '',
               articleContent: d.articleContent || '',
+              tags: typeof d.tags==='string' ? d.tags.trim() : '',
               taskIds: storedTaskIds,
               primaryTaskId
             };
@@ -1115,6 +1195,7 @@
         const metaPieces=[];
         if(song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
         if(song.articleSource) metaPieces.push(song.articleSource);
+        if(song.tags) metaPieces.push(`Tags: ${song.tags}`);
         const ts=formatDateTime(song.createdAt); if(ts) metaPieces.push(ts);
         meta.textContent = metaPieces.filter(Boolean).join(' • ');
 
@@ -1215,6 +1296,7 @@
       const metaPieces=[];
       if(song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
       if(song.articleSource) metaPieces.push(song.articleSource);
+      if(song.tags) metaPieces.push(`Tags: ${song.tags}`);
       const ts=formatDateTime(song.createdAt); if(ts) metaPieces.push(ts);
       $('#songMeta').textContent = metaPieces.join(' — ') || 'Generated';
 
@@ -1262,7 +1344,15 @@
 
     /* ---------- Boot ---------- */
     document.addEventListener('DOMContentLoaded', async ()=>{
+      genreSelect = $('#genreSelect');
+      customTagsInput = $('#customTagsInput');
       generateSongButton = $('#generateSongButton');
+      customTagsInput?.addEventListener('keydown', evt=>{
+        if(evt.key==='Enter'){
+          evt.preventDefault();
+          generateSongButton?.click();
+        }
+      });
       generateSongButton?.addEventListener('click', ()=>{
         if(!selectedStory){ updateStatus('Select a headline to read the story before generating a song.'); return }
         generateSongForHeadline(selectedStory);

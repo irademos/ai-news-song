@@ -427,7 +427,15 @@ app.post('/api/generate-song', async (req, res) => {
     return res.status(500).json({ error: 'OpenRouter API key is not configured.' });
   }
 
-  const { url, headline, source } = req.body || {};
+  const { url, headline, source, tags } = req.body || {};
+
+  const normalizedTags = typeof tags === 'string'
+    ? tags
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .join(', ')
+    : '';
 
   let preparedLyrics = '';
 
@@ -461,15 +469,21 @@ app.post('/api/generate-song', async (req, res) => {
   const prompt = enforcePromptLimit(preparedLyrics);
   console.log('Suno prompt (lyrics) length:', prompt.length);
 
+  const sunoPayload = {
+    custom_mode: true,
+    prompt: prompt,
+    make_instrumental: false,
+    mv: 'chirp-v5',
+  };
+
+  if (normalizedTags) {
+    sunoPayload.tags = normalizedTags;
+  }
+
   const resp = await fetch('https://api.sunoapi.com/api/v1/suno/create', {
     method: 'POST',
     headers: { Authorization: `Bearer ${sunoApiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      custom_mode: true,
-      prompt: prompt,
-      make_instrumental: false,
-      mv: 'chirp-v5',
-    }),
+    body: JSON.stringify(sunoPayload),
   });
 
   const raw = await resp.text();
@@ -496,10 +510,10 @@ app.post('/api/generate-song', async (req, res) => {
 
   // If we got nothing, return the raw body to debug quickly
   if (!taskIds.length && !clipIds.length) {
-    return res.status(202).json({ task_ids: [], clip_ids: [], raw: data, prompt, summary: prompt });
+    return res.status(202).json({ task_ids: [], clip_ids: [], raw: data, prompt, summary: prompt, tags: normalizedTags });
   }
 
-  return res.status(202).json({ task_ids: [...new Set(taskIds)], clip_ids: [...new Set(clipIds)], prompt, summary: prompt });
+  return res.status(202).json({ task_ids: [...new Set(taskIds)], clip_ids: [...new Set(clipIds)], prompt, summary: prompt, tags: normalizedTags });
 });
 
 
