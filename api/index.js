@@ -19,6 +19,8 @@ const LYRIC_MODELS = [
   'meta/llama-3.1-8b-instruct',
 ];
 
+const PODCAST_PLANNER_MODEL = 'openai/gpt-4o-mini';
+
 const ALLOWED_AUDIO_HOSTS = new Set([
   'audiopipe.suno.ai',
   'cdn.suno.ai',
@@ -275,6 +277,23 @@ function enforcePromptLimit(text, max = SUNO_PROMPT_MAX_CHARS) {
   return `${normalised.slice(0, max - 1).trimEnd()}…`;
 }
 
+function extractJsonFromString(raw) {
+  if (!raw) return null;
+  const cleaned = typeof raw === 'string' ? raw.trim() : '';
+  if (!cleaned) return null;
+
+  if (cleaned.startsWith('{') || cleaned.startsWith('[')) {
+    try { return JSON.parse(cleaned); } catch { /* fall through */ }
+  }
+
+  const match = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (match && match[1]) {
+    try { return JSON.parse(match[1]); } catch { /* fall through */ }
+  }
+
+  return null;
+}
+
 function formatStoriesForModel(stories) {
   return stories
     .map((story, index) => {
@@ -383,6 +402,142 @@ async function generateLyricsWithOpenRouter(stories) {
   ].join('\n');
 
   return enforcePromptLimit(fallback);
+}
+
+async function planPodcastWithOpenRouter(stories) {
+  if (!stories?.length) throw new Error('At least one story is required to plan a podcast.');
+
+  const digest = formatStoriesForModel(stories);
+  const system = [
+    'You are a podcast host crafting an energetic but concise script about the news.',
+    'Pick exactly three distinct headlines from the provided list to explore in-depth.',
+    'Write a short overview script that mentions the breadth of headlines before you dive deeper.',
+    'For each chosen headline, propose a tight, spoken-word script (no narration notes, no stage directions).',
+    'Keep everything friendly, vivid, and under 1400 words total. Return pure JSON.',
+  ].join(' ');
+
+  const user = [
+    'Create a JSON object describing a podcast episode with these keys:',
+    'overview_script: spoken narration that tees up the whole news set.',
+    'selections: array of exactly three objects with {headline, source, reason, host_script}.',
+    'Each selected headline must appear exactly as given. host_script should be 120-220 words.',
+    'Make sure overview_script is 160-260 words and references multiple headlines.',
+    '',
+    'Headlines:',
+    digest,
+  ].join('\n');
+
+  const messages = [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+
+  const raw = await callOpenRouterWithRetries({ model: PODCAST_PLANNER_MODEL, messages, attempts: 3 });
+  const parsed = extractJsonFromString(raw);
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Podcast planner did not return JSON.');
+  }
+
+  const overviewScript = typeof parsed.overview_script === 'string'
+    ? parsed.overview_script.trim()
+    : '';
+
+  const selections = Array.isArray(parsed.selections) ? parsed.selections : [];
+  const normalized = selections
+    .map((entry) => {
+      const headline = typeof entry?.headline === 'string' ? entry.headline.trim() : '';
+      if (!headline) return null;
+      return {
+        headline,
+        source: typeof entry?.source === 'string' ? entry.source.trim() : '',
+        reason: typeof entry?.reason === 'string' ? entry.reason.trim() : '',
+        host_script: typeof entry?.host_script === 'string' ? entry.host_script.trim() : '',
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+
+  const headlineSet = new Set(stories.map((s) => s.headline));
+  const filtered = normalized.filter((sel) => headlineSet.has(sel.headline));
+
+  if (!overviewScript || filtered.length !== 3) {
+    throw new Error('Podcast planner returned an incomplete plan.');
+  }
+
+  return { overviewScript, selections: filtered };
+}
+
+async function writeDeepDiveScript({ headline, source, articleText }) {
+  if (!articleText) throw new Error('Full article text is required for a deep dive script.');
+
+  const truncated = articleText.length > 16000 ? `${articleText.slice(0, 16000)}…` : articleText;
+  const system = [
+    'You are a podcast script writer.',
+    'Write an engaging, conversational script that summarizes the full article for listeners.',
+    'Keep it punchy, spoken aloud ready, 180-280 words, no bullet lists, no stage directions.',
+    'Close with a natural line that leads into playing a short AI-generated song.',
+  ].join(' ');
+
+  const user = [
+    `Headline: ${headline || 'Unknown headline'}`,
+    source ? `Source: ${source}` : '',
+    '',
+    'Full article content:',
+    truncated,
+  ].filter(Boolean).join('\n');
+
+  const messages = [
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ];
+
+  const raw = await callOpenRouterWithRetries({ model: PODCAST_PLANNER_MODEL, messages, attempts: 3 });
+  return enforcePromptLimit(raw);
+}
+
+async function createSunoTaskFromScript({ prompt, tags }) {
+  const sunoApiKey = process.env.suno_api || process.env.SUNO_API || process.env.SUNO_API_KEY;
+  if (!sunoApiKey) throw new Error('Suno API key is not configured.');
+
+  const sunoPayload = {
+    custom_mode: true,
+    prompt: enforcePromptLimit(prompt || ''),
+    make_instrumental: false,
+    mv: 'chirp-v5',
+  };
+
+  if (tags) sunoPayload.tags = tags;
+
+  const resp = await fetch('https://api.sunoapi.com/api/v1/suno/create', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${sunoApiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(sunoPayload),
+  });
+
+  const raw = await resp.text();
+  if (!resp.ok) {
+    let details; try { details = JSON.parse(raw); } catch { details = raw; }
+    const err = new Error('Suno create failed');
+    err.details = details;
+    throw err;
+  }
+
+  let data; try { data = JSON.parse(raw); } catch { data = raw; }
+  const toArray = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
+  const list = Array.isArray(data?.data) ? data.data : toArray(data);
+
+  const taskIds = [];
+  const clipIds = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    if (item.task_id) taskIds.push(item.task_id);
+    if (item.id && !item.clip_id && !item.song_id) taskIds.push(item.id);
+    if (item.clip_id) clipIds.push(item.clip_id);
+    if (item.song_id) clipIds.push(item.song_id);
+  }
+
+  return { taskIds: [...new Set(taskIds)], clipIds: [...new Set(clipIds)] };
 }
 
 async function generateSongFromNews() {
@@ -514,6 +669,89 @@ app.post('/api/generate-song', async (req, res) => {
   }
 
   return res.status(202).json({ task_ids: [...new Set(taskIds)], clip_ids: [...new Set(clipIds)], prompt, summary: prompt, tags: normalizedTags });
+});
+
+// POST /api/generate-podcast
+app.post('/api/generate-podcast', async (req, res) => {
+  if (!process.env.OPEN_ROUTER_KEY) {
+    return res.status(500).json({ error: 'OpenRouter API key is not configured.' });
+  }
+
+  const stories = Array.isArray(req.body?.stories) ? req.body.stories : [];
+  if (!stories.length) return res.status(400).json({ error: 'At least one headline is required to build a podcast.' });
+
+  try {
+    const plan = await planPodcastWithOpenRouter(stories);
+
+    const selectedStories = plan.selections.map((sel) => {
+      const match = stories.find((s) => s.headline === sel.headline) || {};
+      return {
+        ...match,
+        headline: sel.headline,
+        source: sel.source || match.source || '',
+        reason: sel.reason || '',
+        host_script: sel.host_script || '',
+      };
+    });
+
+    const deepDiveScripts = [];
+    for (const story of selectedStories) {
+      let articleText = '';
+      try {
+        articleText = await fetchArticleContent(story.link);
+      } catch (error) {
+        console.warn('Unable to fetch article for podcast deep dive:', error.message);
+      }
+
+      const deepScript = articleText
+        ? await writeDeepDiveScript({ headline: story.headline, source: story.source, articleText })
+        : story.host_script;
+
+      deepDiveScripts.push({
+        headline: story.headline,
+        script: deepScript,
+        articleContent: articleText,
+      });
+    }
+
+    const selections = [];
+    const tags = typeof req.body?.tags === 'string' ? req.body.tags.trim() : '';
+
+    for (const story of selectedStories) {
+      const deep = deepDiveScripts.find((entry) => entry.headline === story.headline) || {};
+      const prompt = [
+        'Create a short, melodic track inspired by this news story for a podcast music bed.',
+        'Keep it modern and catchy. Lyrics should echo key details and stay under 900 characters.',
+        deep.script || story.host_script,
+      ].filter(Boolean).join('\n\n');
+
+      const tasks = await createSunoTaskFromScript({ prompt, tags });
+
+      selections.push({
+        headline: story.headline,
+        source: story.source || '',
+        summary: story.summary || '',
+        link: story.link || '',
+        reason: story.reason || '',
+        overviewScript: story.host_script || '',
+        deepDiveScript: deep.script || story.host_script || '',
+        articleContent: deep.articleContent || '',
+        songPrompt: prompt,
+        songTaskIds: tasks.taskIds || [],
+        songClipIds: tasks.clipIds || [],
+        tags,
+      });
+    }
+
+    res.json({
+      overviewScript: plan.overviewScript,
+      selections,
+      createdAtIso: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Podcast generation failed:', error);
+    res.status(502).json({ error: 'Unable to generate podcast.', details: error.message });
+  }
 });
 
 
