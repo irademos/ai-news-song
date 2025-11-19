@@ -302,6 +302,51 @@
     .generate-song button:hover:not(:disabled){ transform:translateY(-1px); box-shadow:0 10px 30px rgba(245,158,11,.35) }
     .generate-song button:disabled{ opacity:.6; cursor:not-allowed; box-shadow:none }
 
+    .generate-song.podcast {
+      border-top: 1px solid rgba(148,163,184,.2);
+      padding-top: 1.5rem;
+      margin-top: .5rem;
+    }
+
+    .podcast-output {
+      display: flex;
+      flex-direction: column;
+      gap: .75rem;
+      padding: 1rem;
+      border-radius: 16px;
+      background: rgba(15,23,42,.45);
+      border: 1px solid rgba(148,163,184,.15);
+    }
+
+    .podcast-script {
+      color: rgba(226,232,240,.92);
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+
+    .podcast-list {
+      list-style: decimal;
+      padding-left: 1.25rem;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: .75rem;
+      color: rgba(226,232,240,.92);
+    }
+
+    .podcast-list li {
+      padding: .75rem .85rem;
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,.15);
+      background: rgba(15,23,42,.35);
+      line-height: 1.55;
+    }
+
+    .podcast-list li.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(245,158,11,.35);
+    }
+
     /* Desktop/tablet: show in right column under the player panel */
     @media (min-width: 861px){
       #dockedAudio {
@@ -543,6 +588,21 @@
         </div>
         <p id="generateSongStatus" class="generate-song-status" aria-live="polite"></p>
       </section>
+
+      <section class="generate-song podcast">
+        <div class="generate-controls">
+          <div class="generate-field">
+            <span>Podcast episode</span>
+            <p class="generate-song-status">Create a spoken recap plus three AI tracks from today’s headlines.</p>
+          </div>
+          <button type="button" id="generatePodcastButton">Generate Podcast</button>
+        </div>
+        <div class="podcast-output" id="podcastOutput">
+          <p id="podcastStatus" class="generate-song-status">Press Generate Podcast to start an AI-hosted news rundown.</p>
+          <div class="podcast-script" id="podcastOverview" aria-live="polite"></div>
+          <ol id="podcastSegments" class="podcast-list"></ol>
+        </div>
+      </section>
     </main>
     
   </div>
@@ -647,7 +707,8 @@
     let songsCache=[], currentSongId=null, unsubscribeSongs=null;
     let headlinesCache=[], groupedHeadlines=new Map(), headlineViewMode='sources', selectedHeadlineSource=null;
     let currentHeadlineKey=null, selectedStory=null, latestArticleContent='', latestSummary='', isGenerating=false;
-    let generateSongButton=null, genreSelect=null, customTagsInput=null, activeContentTab='article';
+    let podcastState=null, podcastIsRunning=false, podcastQueueIndex=-1;
+    let generateSongButton=null, generatePodcastButton=null, genreSelect=null, customTagsInput=null, activeContentTab='article';
 
     /* ---------- DOM Helpers ---------- */
     const $ = sel => document.querySelector(sel);
@@ -669,6 +730,9 @@
       if(!generateSongButton) return;
       if(typeof disabled==='boolean') generateSongButton.disabled = disabled;
       if(typeof text==='string') generateSongButton.textContent = text;
+    };
+    const updatePodcastStatus = (msg)=>{
+      const el=$('#podcastStatus'); if(el) el.textContent = msg || '';
     };
     const getRequestedTags = ()=>{
       const values=[];
@@ -739,6 +803,65 @@
     function updateDockState(){
       const src = document.getElementById('audioSource')?.getAttribute('src') || '';
       document.body.classList.toggle('has-audio', !!src);
+    }
+
+    /* ---------- Podcast helpers ---------- */
+    let currentUtterance=null;
+    function speakText(text){
+      return new Promise(resolve=>{
+        if(!('speechSynthesis' in window) || !text){
+          resolve();
+          return;
+        }
+        if(currentUtterance){
+          try{ speechSynthesis.cancel(); }catch{}
+        }
+        const utter=new SpeechSynthesisUtterance(text);
+        utter.rate=1.02; utter.pitch=1.0; utter.lang='en-US';
+        utter.onend=()=>{ currentUtterance=null; resolve(); };
+        utter.onerror=()=>{ currentUtterance=null; resolve(); };
+        currentUtterance=utter;
+        try{ speechSynthesis.speak(utter); }catch{ resolve(); }
+      });
+    }
+
+    function renderPodcastScripts(){
+      const overviewEl=$('#podcastOverview');
+      const list=$('#podcastSegments');
+      if(!overviewEl||!list) return;
+      if(!podcastState){
+        overviewEl.textContent='';
+        list.innerHTML='';
+        return;
+      }
+      overviewEl.textContent = podcastState.overviewScript || '';
+      list.innerHTML='';
+      (podcastState.selections||[]).forEach((seg,idx)=>{
+        const li=document.createElement('li');
+        li.classList.toggle('active', idx===podcastQueueIndex);
+        const title=document.createElement('div');
+        title.innerHTML = `<strong>${seg.headline||'Article'}</strong>${seg.source?` — ${seg.source}`:''}`;
+        const script=document.createElement('div');
+        script.className='podcast-script';
+        script.textContent = seg.deepDiveScript || seg.overviewScript || '';
+        li.appendChild(title);
+        li.appendChild(script);
+        list.appendChild(li);
+      });
+    }
+
+    function playClip(url){
+      return new Promise(resolve=>{
+        const src = getPlayableAudioUrl(url);
+        if(!src){ resolve(); return; }
+        $('#audioSource').src = src;
+        $('#audioPlayer').load();
+        const onEnd=()=>{ audio?.removeEventListener('ended', onEnd); audio?.removeEventListener('error', onEnd); resolve(); };
+        audio?.addEventListener('ended', onEnd);
+        audio?.addEventListener('error', onEnd);
+        audio?.play().catch(()=>resolve());
+        updateDockState();
+      });
     }
 
     /* ---------- Headlines UI ---------- */
@@ -1079,6 +1202,73 @@
       return addDoc(songsRef, payload);
     }
 
+    async function savePodcastEpisode(podcast){
+      if(!db) throw new Error('Firebase is not available.');
+      if(!podcast) throw new Error('No podcast payload to save.');
+
+      const episodesRef = collection(db,'podcasts');
+      const generatedIso = podcast.createdAtIso || new Date().toISOString();
+
+      const segments = (podcast.selections || []).map(seg=>{
+        const song = seg.song || {};
+        return {
+          headline: seg.headline || '',
+          source: seg.source || '',
+          summary: seg.summary || '',
+          link: seg.link || '',
+          deepDiveScript: seg.deepDiveScript || '',
+          overviewScript: seg.overviewScript || '',
+          articleContent: seg.articleContent || '',
+          songPrompt: seg.songPrompt || '',
+          song: {
+            audioUrl: sanitizeAudioUrl(song.audioUrl || ''),
+            streamUrl: sanitizeAudioUrl(song.streamUrl || ''),
+            imageUrl: sanitizeImageUrl(song.imageUrl || ''),
+            taskIds: Array.isArray(seg.songTaskIds) ? seg.songTaskIds : [],
+            clipIds: Array.isArray(seg.songClipIds) ? seg.songClipIds : [],
+            tags: seg.tags || '',
+          },
+        };
+      });
+
+      const payload = {
+        overviewScript: podcast.overviewScript || '',
+        createdAt: serverTimestamp(),
+        generatedAtIso: generatedIso,
+        selections: segments,
+      };
+
+      return addDoc(episodesRef, payload);
+    }
+
+    async function finalizePodcastEpisode({docRef, selections=[]}){
+      if(!docRef || !selections.length) return;
+
+      const resolvedSelections = await Promise.all(selections.map(async (seg)=>{
+        const taskIds = Array.isArray(seg.songTaskIds) ? seg.songTaskIds : [];
+        const clipIds = Array.isArray(seg.songClipIds) ? seg.songClipIds : [];
+        let finalAudio='', finalImage='';
+        if(taskIds.length || clipIds.length){
+          const finalClip = await pollForAudioIds({taskIds, clipIds},{timeoutMs:240000, intervalMs:12000, requireFinalAudioHost:true}).catch(()=>null);
+          finalAudio = sanitizeAudioUrl(finalClip?.audio_url || '', {migrateHost:true});
+          finalImage = sanitizeImageUrl(finalClip?.image_url || '');
+        }
+        return {
+          ...seg,
+          song: {
+            audioUrl: finalAudio || seg.song?.audioUrl || seg.song?.streamUrl || '',
+            streamUrl: seg.song?.streamUrl || '',
+            imageUrl: finalImage || seg.song?.imageUrl || '',
+            taskIds,
+            clipIds,
+            tags: seg.tags || '',
+          },
+        };
+      }));
+
+      await updateDoc(docRef, { selections: resolvedSelections });
+    }
+
     async function finalizeSongAudio({docRef, taskIds=[], clipIds=[], streamUrl, songRecord}){
       if(!docRef || (!taskIds.length && !clipIds.length)) return;
       try{
@@ -1114,6 +1304,80 @@
           if(migratedImg) songRecord.imageUrl=migratedImg;
         }
       }
+    }
+
+    function beginSongPollForSegment(seg){
+      if(!seg || seg.songPromise) return seg?.songPromise;
+      const taskIds = Array.isArray(seg.songTaskIds) ? seg.songTaskIds : [];
+      const clipIds = Array.isArray(seg.songClipIds) ? seg.songClipIds : [];
+      if(!taskIds.length && !clipIds.length){
+        seg.songPromise = Promise.resolve(null);
+        return seg.songPromise;
+      }
+      seg.songPromise = pollForAudioIds({taskIds, clipIds},{timeoutMs:240000, intervalMs:12000})
+        .then(clip=>{
+          const clipUrl = sanitizeAudioUrl(clip?.audio_url || '');
+          const img = sanitizeImageUrl(clip?.image_url || '');
+          seg.song = {
+            audioUrl: clipUrl,
+            streamUrl: clipUrl,
+            imageUrl: img,
+            taskIds,
+            clipIds,
+            tags: seg.tags || '',
+          };
+          return seg.song;
+        })
+        .catch(err=>{
+          console.warn('Podcast segment audio failed:', err);
+          return null;
+        });
+      return seg.songPromise;
+    }
+
+    async function playPodcastQueue(){
+      if(!podcastState) return;
+      podcastIsRunning=true;
+      podcastQueueIndex=-1;
+      renderPodcastScripts();
+
+      const selections = podcastState.selections || [];
+      if(selections[0]) beginSongPollForSegment(selections[0]);
+
+      updatePodcastStatus('Starting podcast narration…');
+      if(podcastState.overviewScript){
+        await speakText(podcastState.overviewScript);
+      }
+
+      for(let i=0;i<selections.length;i++){
+        podcastQueueIndex=i; renderPodcastScripts();
+        const seg = selections[i];
+        updatePodcastStatus(`Talking through ${seg.headline || 'a top story'}…`);
+        await speakText(seg.deepDiveScript || seg.overviewScript || seg.reason || '');
+
+        const song = await beginSongPollForSegment(seg);
+        if(song && (song.audioUrl || song.streamUrl)){
+          updatePodcastStatus('Playing Suno track…');
+          await playClip(song.audioUrl || song.streamUrl);
+        }
+
+        const next = selections[i+1];
+        if(next) beginSongPollForSegment(next);
+      }
+
+      podcastQueueIndex=-1; renderPodcastScripts();
+      updatePodcastStatus('Podcast finished.');
+
+      if(podcastState){
+        try{
+          await initFirebase();
+          const docRef = await savePodcastEpisode(podcastState);
+          finalizePodcastEpisode({docRef, selections: podcastState.selections})
+            .catch(e=>console.warn('Finalize podcast episode failed:', e));
+        }catch(err){ console.warn('Failed to save podcast episode:', err); }
+      }
+
+      podcastIsRunning=false;
     }
 
     async function subscribeToSongs(){
@@ -1342,11 +1606,47 @@
       updateDockState();
     }
 
+    async function generatePodcastEpisode(){
+      if(podcastIsRunning){ updatePodcastStatus('A podcast is already running.'); return; }
+      if(!headlinesCache.length){ updatePodcastStatus('Load headlines first, then try again.'); return; }
+
+      podcastIsRunning=true;
+      podcastQueueIndex=-1;
+      updatePodcastStatus('Asking OpenRouter for a podcast script…');
+      renderPodcastScripts();
+
+      try{
+        const payload={ stories: headlinesCache };
+        const r=await fetch('/api/generate-podcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const body=await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(body?.error || 'Unable to start podcast.');
+
+        const selections = Array.isArray(body?.selections) ? body.selections : [];
+        podcastState = {
+          overviewScript: body.overviewScript || '',
+          selections,
+          createdAtIso: body.createdAtIso || new Date().toISOString(),
+        };
+
+        renderPodcastScripts();
+        updatePodcastStatus('Narrating podcast and generating Suno songs…');
+        playPodcastQueue().catch(err=>{
+          console.warn('Podcast playback failed:', err);
+          updatePodcastStatus(err?.message || 'Podcast playback failed.');
+          podcastIsRunning=false;
+        });
+      }catch(err){
+        updatePodcastStatus(err.message || 'Unable to generate podcast.');
+        podcastIsRunning=false;
+      }
+    }
+
     /* ---------- Boot ---------- */
     document.addEventListener('DOMContentLoaded', async ()=>{
       genreSelect = $('#genreSelect');
       customTagsInput = $('#customTagsInput');
       generateSongButton = $('#generateSongButton');
+      generatePodcastButton = $('#generatePodcastButton');
       customTagsInput?.addEventListener('keydown', evt=>{
         if(evt.key==='Enter'){
           evt.preventDefault();
@@ -1356,6 +1656,9 @@
       generateSongButton?.addEventListener('click', ()=>{
         if(!selectedStory){ updateStatus('Select a headline to read the story before generating a song.'); return }
         generateSongForHeadline(selectedStory);
+      });
+      generatePodcastButton?.addEventListener('click', ()=>{
+        generatePodcastEpisode();
       });
 
       // Desktop sidebar tabs
