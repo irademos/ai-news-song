@@ -309,6 +309,16 @@ function formatStoriesForModel(stories) {
     .join('\n');
 }
 
+function normalizeHeadlineKey(text) {
+  if (!text) return '';
+  return text
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 async function summarizeArticleWithOpenRouter({ headline, source, articleText }) {
   const apiKey = process.env.OPEN_ROUTER_KEY;
   if (!apiKey) {
