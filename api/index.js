@@ -468,22 +468,8 @@ async function planPodcastWithOpenRouter(stories) {
     .filter(Boolean)
     .slice(0, 3);
 
-  const storyKeyMap = new Map(stories.map((story) => [normalizeHeadlineKey(story.headline), story.headline]));
-  const filtered = normalized
-    .map((sel) => {
-      const key = normalizeHeadlineKey(sel.headline);
-      if (storyKeyMap.has(key)) {
-        return { ...sel, headline: storyKeyMap.get(key) };
-      }
-
-      const looseMatch = stories.find((story) => {
-        const storyKey = normalizeHeadlineKey(story.headline);
-        return storyKey.includes(key) || key.includes(storyKey);
-      });
-
-      return looseMatch ? { ...sel, headline: looseMatch.headline } : null;
-    })
-    .filter(Boolean);
+  const headlineSet = new Set(stories.map((s) => s.headline));
+  const filtered = normalized.filter((sel) => headlineSet.has(sel.headline));
 
   if (!overviewScript || filtered.length !== 3) {
     throw new Error('Podcast planner returned an incomplete plan.');
@@ -707,13 +693,11 @@ app.post('/api/generate-podcast', async (req, res) => {
   try {
     const plan = await planPodcastWithOpenRouter(stories);
 
-    const storyLookup = new Map(stories.map((s) => [normalizeHeadlineKey(s.headline), s]));
     const selectedStories = plan.selections.map((sel) => {
-      const key = normalizeHeadlineKey(sel.headline);
-      const match = storyLookup.get(key) || stories.find((s) => normalizeHeadlineKey(s.headline) === key) || {};
+      const match = stories.find((s) => s.headline === sel.headline) || {};
       return {
         ...match,
-        headline: match.headline || sel.headline,
+        headline: sel.headline,
         source: sel.source || match.source || '',
         reason: sel.reason || '',
         host_script: sel.host_script || '',
