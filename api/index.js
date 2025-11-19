@@ -414,6 +414,17 @@ async function generateLyricsWithOpenRouter(stories) {
   return enforcePromptLimit(fallback);
 }
 
+function scoreSimilarity(a, b) {
+  const ta = new Set(a.split(/\s+/));
+  const tb = new Set(b.split(/\s+/));
+
+  let overlap = 0;
+  for (const w of ta) if (tb.has(w)) overlap++;
+
+  const maxLen = Math.max(ta.size, tb.size) || 1;
+  return overlap / maxLen;  // 0–1
+}
+
 async function planPodcastWithOpenRouter(stories) {
   if (!stories?.length) throw new Error('At least one story is required to plan a podcast.');
 
@@ -442,7 +453,19 @@ async function planPodcastWithOpenRouter(stories) {
     { role: 'user', content: user },
   ];
 
-  const raw = await callOpenRouterWithRetries({ model: PODCAST_PLANNER_MODEL, messages, attempts: 3 });
+  for (const model of LYRIC_MODELS) {
+    console.log("trying model:", model);
+    try {
+      raw = await callOpenRouterWithRetries({ model, messages, attempts: 3 });
+      console.log("podcast:", raw);
+      break;
+    } catch (e) {
+      console.log(model, e);
+      // errors.push(`[${model}] ${e.message}`);
+      continue;
+    }
+  }
+  // const raw = await callOpenRouterWithRetries({ model: PODCAST_PLANNER_MODEL, messages, attempts: 3 });
   const parsed = extractJsonFromString(raw);
 
   if (!parsed || typeof parsed !== 'object') {
@@ -468,8 +491,34 @@ async function planPodcastWithOpenRouter(stories) {
     .filter(Boolean)
     .slice(0, 3);
 
-  const headlineSet = new Set(stories.map((s) => s.headline));
-  const filtered = normalized.filter((sel) => headlineSet.has(sel.headline));
+  const storyKeyMap = new Map(stories.map((story) => [
+    normalizeHeadlineKey(story.headline),
+    story.headline
+  ]));
+
+  const filtered = normalized
+    .map((sel) => {
+      const key = normalizeHeadlineKey(sel.headline);
+
+      let best = null;
+      let bestScore = 0;
+
+      for (const story of stories) {
+        const storyKey = normalizeHeadlineKey(story.headline);
+        const score = scoreSimilarity(key, storyKey);
+        if (score > bestScore) {
+          bestScore = score;
+          best = story;
+        }
+      }
+
+      const THRESHOLD = 0.35;
+      return bestScore >= THRESHOLD
+        ? { ...sel, headline: best.headline }
+        : null;
+    })
+    .filter(Boolean);
+
 
   if (!overviewScript || filtered.length !== 3) {
     throw new Error('Podcast planner returned an incomplete plan.');
@@ -693,11 +742,13 @@ app.post('/api/generate-podcast', async (req, res) => {
   try {
     const plan = await planPodcastWithOpenRouter(stories);
 
+    const storyLookup = new Map(stories.map((s) => [normalizeHeadlineKey(s.headline), s]));
     const selectedStories = plan.selections.map((sel) => {
-      const match = stories.find((s) => s.headline === sel.headline) || {};
+      const key = normalizeHeadlineKey(sel.headline);
+      const match = storyLookup.get(key) || stories.find((s) => normalizeHeadlineKey(s.headline) === key) || {};
       return {
         ...match,
-        headline: sel.headline,
+        headline: match.headline || sel.headline,
         source: sel.source || match.source || '',
         reason: sel.reason || '',
         host_script: sel.host_script || '',
