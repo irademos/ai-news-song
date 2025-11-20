@@ -1208,6 +1208,7 @@
       const primaryTaskId = typeof song?.primaryTaskId==='string' ? song.primaryTaskId.trim() : normalizedTaskIds[0] || '';
 
       const payload = {
+        kind: song.kind || 'song',
         sunoTitle: song.sunoTitle || song.title || 'Daily Spin (Suno)',
         sunoArtist: song.sunoArtist || song.artist || 'Suno AI',
         lyrics: (song.lyrics || '').trim(),
@@ -1247,6 +1248,8 @@
           overviewScript: seg.overviewScript || '',
           articleContent: seg.articleContent || '',
           songPrompt: seg.songPrompt || '',
+          songTaskIds: Array.isArray(seg.songTaskIds) ? seg.songTaskIds : [],
+          songClipIds: Array.isArray(seg.songClipIds) ? seg.songClipIds : [],
           song: {
             audioUrl: sanitizeAudioUrl(song.audioUrl || ''),
             streamUrl: sanitizeAudioUrl(song.streamUrl || ''),
@@ -1266,6 +1269,70 @@
       };
 
       return addDoc(episodesRef, payload);
+    }
+
+    function pickPrimaryPodcastSong(selections){
+      if(!Array.isArray(selections)) return {};
+      const withAudio = selections.find(seg=>{
+        const song = seg.song || {};
+        return sanitizeAudioUrl(song.audioUrl || song.streamUrl || '');
+      });
+      const candidate = withAudio || selections[0] || {};
+      const song = candidate.song || {};
+
+      const audioUrl = sanitizeAudioUrl(song.audioUrl || song.streamUrl || '');
+      const streamUrl = sanitizeAudioUrl(song.streamUrl || '');
+      const imageUrl = sanitizeImageUrl(song.imageUrl || '');
+      const taskIds = Array.isArray(candidate.songTaskIds) ? candidate.songTaskIds : Array.isArray(song.taskIds) ? song.taskIds : [];
+      const clipIds = Array.isArray(candidate.songClipIds) ? candidate.songClipIds : Array.isArray(song.clipIds) ? song.clipIds : [];
+
+      return {
+        audioUrl,
+        streamUrl,
+        imageUrl,
+        taskIds,
+        clipIds,
+        headline: candidate.headline || '',
+        source: candidate.source || '',
+      };
+    }
+
+    async function savePodcastSpin({podcast, episodeRef}){
+      if(!db) throw new Error('Firebase is not available.');
+      if(!podcast) throw new Error('No podcast payload to save.');
+
+      const spinsRef = collection(db,'spins');
+      const generatedIso = podcast.createdAtIso || new Date().toISOString();
+      const selections = Array.isArray(podcast.selections) ? podcast.selections : [];
+      const firstSong = pickPrimaryPodcastSong(selections);
+      const primaryTaskId = firstSong.taskIds?.[0] || '';
+      const headlineForMeta = selections[0]?.headline || 'Daily Spin Podcast';
+
+      const payload = {
+        kind: 'podcast',
+        sunoTitle: 'Daily Spin Podcast',
+        sunoArtist: 'Daily Spin',
+        lyrics: (podcast.overviewScript || '').trim(),
+        audioUrl: firstSong.audioUrl || '',
+        streamUrl: firstSong.streamUrl || '',
+        imageUrl: firstSong.imageUrl || '',
+        prompt: podcast.overviewScript || '',
+        articleHeadline: headlineForMeta,
+        articleSummary: podcast.overviewScript || '',
+        articleSource: 'Podcast',
+        articleUrl: '',
+        articleContent: podcast.overviewScript || '',
+        taskIds: Array.isArray(firstSong.taskIds) ? firstSong.taskIds : [],
+        primaryTaskId,
+        createdAt: serverTimestamp(),
+        generatedAtIso: generatedIso,
+        tags: '',
+        podcastOverview: podcast.overviewScript || '',
+        podcastSelections: selections,
+        podcastId: episodeRef?.id || '',
+      };
+
+      return addDoc(spinsRef, payload);
     }
 
     async function finalizePodcastEpisode({docRef, selections=[]}){
@@ -1294,6 +1361,38 @@
       }));
 
       await updateDoc(docRef, { selections: resolvedSelections });
+      return resolvedSelections;
+    }
+
+    async function finalizePodcastSpin({docRef, selections=[]}){
+      if(!docRef) return;
+      const resolvedSelections = Array.isArray(selections) ? selections : [];
+      const primary = pickPrimaryPodcastSong(resolvedSelections);
+
+      const updatePayload = {
+        podcastSelections: resolvedSelections,
+      };
+
+      if(primary.audioUrl || primary.streamUrl){
+        updatePayload.audioUrl = primary.audioUrl || primary.streamUrl;
+        updatePayload.streamUrl = primary.streamUrl || primary.audioUrl || '';
+        updatePayload.imageUrl = primary.imageUrl || '';
+        updatePayload.taskIds = Array.isArray(primary.taskIds) ? primary.taskIds : [];
+        updatePayload.primaryTaskId = (primary.taskIds || [])[0] || '';
+        updatePayload.articleHeadline = primary.headline || 'Daily Spin Podcast';
+        updatePayload.articleSource = primary.source || 'Podcast';
+      }
+
+      await updateDoc(docRef, updatePayload);
+
+      if(primary.taskIds?.length || primary.clipIds?.length){
+        finalizeSongAudio({
+          docRef,
+          taskIds: primary.taskIds || [],
+          clipIds: primary.clipIds || [],
+          streamUrl: primary.streamUrl,
+        }).catch(err=>console.warn('Finalize podcast spin audio failed:', err));
+      }
     }
 
     async function finalizeSongAudio({docRef, taskIds=[], clipIds=[], streamUrl, songRecord}){
@@ -1362,7 +1461,7 @@
       return seg.songPromise;
     }
 
-    async function playPodcastQueue(){
+    async function playPodcastQueue({persist=true}={}){
       if(!podcastState) return;
       podcastIsRunning=true;
       podcastQueueIndex=-1;
@@ -1395,11 +1494,14 @@
       podcastQueueIndex=-1; renderPodcastScripts();
       updatePodcastStatus('Podcast finished.');
 
-      if(podcastState){
+      if(persist && podcastState){
         try{
           await initFirebase();
           const docRef = await savePodcastEpisode(podcastState);
+          const spinRef = await savePodcastSpin({podcast: podcastState, episodeRef: docRef});
+
           finalizePodcastEpisode({docRef, selections: podcastState.selections})
+            .then(resolved=>finalizePodcastSpin({docRef: spinRef, selections: resolved || podcastState.selections}))
             .catch(e=>console.warn('Finalize podcast episode failed:', e));
         }catch(err){ console.warn('Failed to save podcast episode:', err); }
       }
@@ -1433,20 +1535,24 @@
               sunoTitle: d.sunoTitle || d.title || 'Daily Spin (Suno)',
               artist: d.artist || d.sunoArtist || 'Suno AI',
               sunoArtist: d.sunoArtist || d.artist || 'Suno AI',
-              lyrics: d.lyrics || d.prompt || '',
+              kind: d.kind || 'song',
+              lyrics: d.lyrics || d.prompt || d.podcastOverview || '',
               audioUrl: rawAudioUrl || rawStreamUrl,
               streamUrl: rawStreamUrl,
               imageUrl: img,
               createdAt,
               prompt: d.prompt || '',
               articleHeadline: d.articleHeadline || '',
-              articleSummary: d.articleSummary || d.prompt || '',
+              articleSummary: d.articleSummary || d.prompt || d.podcastOverview || '',
               articleSource: d.articleSource || '',
               articleUrl: d.articleUrl || '',
-              articleContent: d.articleContent || '',
+              articleContent: d.articleContent || d.podcastOverview || '',
               tags: typeof d.tags==='string' ? d.tags.trim() : '',
               taskIds: storedTaskIds,
-              primaryTaskId
+              primaryTaskId,
+              podcastOverview: d.podcastOverview || '',
+              podcastSelections: Array.isArray(d.podcastSelections) ? d.podcastSelections : [],
+              podcastId: d.podcastId || '',
             };
           })
           .filter(s=>Boolean(s.audioUrl));
@@ -1480,10 +1586,13 @@
         const img=thumb.querySelector('img');
         const ph=thumb.querySelector('.song-thumb-placeholder');
 
-        const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
+        const displayTitle = song.kind==='podcast'
+          ? (song.articleHeadline || 'Daily Spin Podcast')
+          : (song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)');
         title.textContent = displayTitle;
 
         const metaPieces=[];
+        if(song.kind==='podcast') metaPieces.push('Podcast');
         if(song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
         if(song.articleSource) metaPieces.push(song.articleSource);
         if(song.tags) metaPieces.push(`Tags: ${song.tags}`);
@@ -1578,13 +1687,17 @@
     }
 
     function setCurrentSong(song){
-      if(!song){ resetNowPlaying(); return }
+      if(!song){ resetNowPlaying(); podcastState=null; renderPodcastScripts(); return }
       currentSongId = song.id || null;
 
-      const displayTitle = song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)';
+      const isPodcast = song.kind === 'podcast';
+      const displayTitle = isPodcast
+        ? (song.articleHeadline || 'Daily Spin Podcast')
+        : (song.articleHeadline || song.sunoTitle || song.title || 'Daily Spin (Suno)');
       $('#songTitle').textContent = displayTitle;
 
       const metaPieces=[];
+      if(isPodcast) metaPieces.push('Podcast');
       if(song.sunoTitle || song.title) metaPieces.push(`Suno: ${song.sunoTitle || song.title}`);
       if(song.articleSource) metaPieces.push(song.articleSource);
       if(song.tags) metaPieces.push(`Tags: ${song.tags}`);
@@ -1593,30 +1706,61 @@
 
       const articleParts=[];
       if(song.articleHeadline) articleParts.push(song.articleHeadline);
-      if(song.articleContent) articleParts.push(song.articleContent); else if(song.articleSummary) articleParts.push(song.articleSummary);
+      if(isPodcast){
+        if(song.podcastOverview) articleParts.push(song.podcastOverview);
+        const segmentScripts = (song.podcastSelections||[])
+          .map(seg=>`— ${seg.headline || 'Story'}\n${seg.deepDiveScript || seg.overviewScript || seg.reason || ''}`)
+          .filter(Boolean)
+          .join('\n\n');
+        if(segmentScripts) articleParts.push(segmentScripts);
+      }else if(song.articleContent){
+        articleParts.push(song.articleContent);
+      } else if(song.articleSummary){
+        articleParts.push(song.articleSummary);
+      }
+
       $('#songArticle').textContent = articleParts.join('\n\n') || 'Article details are unavailable for this spin.';
-      $('#songLyrics').textContent = (song.lyrics || song.prompt || '').trim() || 'Lyrics were not provided for this spin.';
+      $('#songLyrics').textContent = (song.lyrics || song.prompt || song.podcastOverview || '').trim() || 'Lyrics were not provided for this spin.';
 
-      const rawAudio = sanitizeAudioUrl(song.audioUrl || song.streamUrl || '');
-      const playable=getPlayableAudioUrl(rawAudio);
-      const currentSrc = $('#audioSource').getAttribute('src') || '';
-      if(playable !== currentSrc){
-        $('#audioSource').src = playable; $('#audioPlayer').load();
-        if(playable) $('#audioPlayer').play().catch(()=>{});
-      }else if(playable){ $('#audioPlayer').play().catch(()=>{}) }
+      if(isPodcast){
+        podcastState = {
+          overviewScript: song.podcastOverview || song.articleContent || '',
+          selections: Array.isArray(song.podcastSelections) ? song.podcastSelections : [],
+          createdAtIso: song.generatedAtIso || (song.createdAt instanceof Date ? song.createdAt.toISOString() : new Date().toISOString()),
+        };
+        renderPodcastScripts();
+        if(!podcastIsRunning){
+          updatePodcastStatus('Playing saved podcast episode…');
+          playPodcastQueue({persist:false}).catch(err=>{
+            console.warn('Podcast playback from archive failed:', err);
+            updatePodcastStatus(err?.message || 'Unable to play podcast episode.');
+          });
+        }
+      } else {
+        podcastState = null;
+        renderPodcastScripts();
 
-      if(hasAudioPipeHost(rawAudio)){
-        resolveSongAudioUrl(song).then(finalRaw=>{
-          if(!finalRaw || hasAudioPipeHost(finalRaw)) return;
-          if((song.id || null)!==currentSongId) return;
-          const finalPlayable = getPlayableAudioUrl(finalRaw);
-          const current = $('#audioSource').getAttribute('src') || '';
-          if(finalPlayable && finalPlayable!==current){
-            $('#audioSource').src = finalPlayable;
-            $('#audioPlayer').load();
-            $('#audioPlayer').play().catch(()=>{});
-          }
-        }).catch(err=>console.warn('Audio migration failed:', err));
+        const rawAudio = sanitizeAudioUrl(song.audioUrl || song.streamUrl || '');
+        const playable=getPlayableAudioUrl(rawAudio);
+        const currentSrc = $('#audioSource').getAttribute('src') || '';
+        if(playable !== currentSrc){
+          $('#audioSource').src = playable; $('#audioPlayer').load();
+          if(playable) $('#audioPlayer').play().catch(()=>{});
+        }else if(playable){ $('#audioPlayer').play().catch(()=>{}) }
+
+        if(hasAudioPipeHost(rawAudio)){
+          resolveSongAudioUrl(song).then(finalRaw=>{
+            if(!finalRaw || hasAudioPipeHost(finalRaw)) return;
+            if((song.id || null)!==currentSongId) return;
+            const finalPlayable = getPlayableAudioUrl(finalRaw);
+            const current = $('#audioSource').getAttribute('src') || '';
+            if(finalPlayable && finalPlayable!==current){
+              $('#audioSource').src = finalPlayable;
+              $('#audioPlayer').load();
+              $('#audioPlayer').play().catch(()=>{});
+            }
+          }).catch(err=>console.warn('Audio migration failed:', err));
+        }
       }
 
       const tag=$('#songTag');
