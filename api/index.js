@@ -324,6 +324,7 @@ async function summarizeArticleWithOpenRouter({ headline, source, articleText })
   if (!apiKey) {
     throw new Error('OpenRouter API key is not configured.');
   }
+  console.log("text3", articleText);
 
   if (!articleText) {
     throw new Error('No article content was provided for summarisation.');
@@ -534,7 +535,7 @@ async function writeDeepDiveScript({ headline, source, articleText }) {
   const system = [
     'You are a podcast script writer.',
     'Write an engaging, conversational script that summarizes the full article for listeners.',
-    'Keep it punchy, spoken aloud ready, 180-280 words, no bullet lists, no stage directions.',
+    'Keep it punchy, spoken aloud ready, 130-230 words, no bullet lists, no stage directions.',
     'Close with a natural line that leads into playing a short AI-generated song.',
   ].join(' ');
 
@@ -555,13 +556,25 @@ async function writeDeepDiveScript({ headline, source, articleText }) {
   return enforcePromptLimit(raw);
 }
 
-async function createSunoTaskFromScript({ prompt, tags }) {
+async function createSunoTaskFromScript({ articleTxt, headline, source, tags }) {
+  let lyrics;
+  try {
+    lyrics = await summarizeArticleWithOpenRouter({
+      headline,
+      source,
+      articleText: articleTxt,
+    });
+  } catch (error) {
+    console.error('Unable to summarise article with OpenRouter:', error);
+    return null;
+  }
+
   const sunoApiKey = process.env.suno_api || process.env.SUNO_API || process.env.SUNO_API_KEY;
   if (!sunoApiKey) throw new Error('Suno API key is not configured.');
 
   const sunoPayload = {
     custom_mode: true,
-    prompt: enforcePromptLimit(prompt || ''),
+    prompt: lyrics,
     make_instrumental: false,
     mv: 'chirp-v5',
   };
@@ -772,6 +785,7 @@ app.post('/api/generate-podcast', async (req, res) => {
         headline: story.headline,
         script: deepScript,
         articleContent: articleText,
+        source: story.source,
       });
     }
 
@@ -786,22 +800,33 @@ app.post('/api/generate-podcast', async (req, res) => {
         deep.script || story.host_script,
       ].filter(Boolean).join('\n\n');
 
-      const tasks = await createSunoTaskFromScript({ prompt, tags });
+      const articleTxt = deep.articleContent;
+      const hdline = deep.headline;
+      const src = deep.source;
 
-      selections.push({
-        headline: story.headline,
-        source: story.source || '',
-        summary: story.summary || '',
-        link: story.link || '',
-        reason: story.reason || '',
-        overviewScript: story.host_script || '',
-        deepDiveScript: deep.script || story.host_script || '',
-        articleContent: deep.articleContent || '',
-        songPrompt: prompt,
-        songTaskIds: tasks.taskIds || [],
-        songClipIds: tasks.clipIds || [],
+      const tasks = await createSunoTaskFromScript({
+        articleTxt,
+        headline: hdline,
+        source: src,
         tags,
       });
+
+      if(tasks) {
+        selections.push({
+          headline: story.headline,
+          source: story.source || '',
+          summary: story.summary || '',
+          link: story.link || '',
+          reason: story.reason || '',
+          overviewScript: story.host_script || '',
+          deepDiveScript: deep.script || story.host_script || '',
+          articleContent: deep.articleContent || '',
+          songPrompt: prompt,
+          songTaskIds: tasks.taskIds || [],
+          songClipIds: tasks.clipIds || [],
+          tags,
+        });
+      };
     }
 
     res.json({
