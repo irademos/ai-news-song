@@ -665,6 +665,7 @@
   <!-- =========================
        Script (Organized)
   ========================== -->
+  <script src="https://js.puter.com/v2/"></script>
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
     import {
@@ -806,22 +807,48 @@
     }
 
     /* ---------- Podcast helpers ---------- */
-    let currentUtterance=null;
-    function speakText(text){
-      return new Promise(resolve=>{
-        if(!('speechSynthesis' in window) || !text){
+    let currentAudio = null;
+
+    async function speakText(text) {
+      return new Promise(async (resolve) => {
+        if (!text) {
           resolve();
           return;
         }
-        if(currentUtterance){
-          try{ speechSynthesis.cancel(); }catch{}
+
+        // Stop any existing playback
+        if (currentAudio) {
+          try { currentAudio.pause(); } catch {}
+          currentAudio = null;
         }
-        const utter=new SpeechSynthesisUtterance(text);
-        utter.rate=1.02; utter.pitch=1.0; utter.lang='en-US';
-        utter.onend=()=>{ currentUtterance=null; resolve(); };
-        utter.onerror=()=>{ currentUtterance=null; resolve(); };
-        currentUtterance=utter;
-        try{ speechSynthesis.speak(utter); }catch{ resolve(); }
+
+        try {
+          // Create TTS audio using OpenAI alloy voice via Puter
+          const audio = await puter.ai.txt2speech(text, {
+            provider: "openai",
+            model: "gpt-4o-mini-tts",   // good, cheap, fast TTS model
+            voice: "alloy",
+            response_format: "mp3",
+            instructions: "Sound clear and friendly.",
+          });
+
+          currentAudio = audio;
+
+          audio.onended = () => {
+            currentAudio = null;
+            resolve();
+          };
+
+          audio.onerror = () => {
+            currentAudio = null;
+            resolve();
+          };
+
+          audio.play();
+        } catch (err) {
+          console.error("Puter/OpenAI TTS error:", err);
+          resolve();
+        }
       });
     }
 
