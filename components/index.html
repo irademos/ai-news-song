@@ -826,7 +826,7 @@
           // Create TTS audio using OpenAI alloy voice via Puter
           const audio = await puter.ai.txt2speech(text, {
             provider: "openai",
-            model: "gpt-4o-mini-tts",   // good, cheap, fast TTS model
+            model: "gpt-4o-mini-tts",
             voice: "alloy",
             response_format: "mp3",
             instructions: "Sound clear and friendly.",
@@ -1461,10 +1461,10 @@
       return seg.songPromise;
     }
 
-    async function playPodcastQueue({persist=true}={}){
+    async function playPodcastQueue({persist=true}={}) {
       if(!podcastState) return;
-      podcastIsRunning=true;
-      podcastQueueIndex=-1;
+      podcastIsRunning = true;
+      podcastQueueIndex = -1;
       renderPodcastScripts();
 
       const selections = podcastState.selections || [];
@@ -1475,8 +1475,9 @@
         await speakText(podcastState.overviewScript);
       }
 
-      for(let i=0;i<selections.length;i++){
-        podcastQueueIndex=i; renderPodcastScripts();
+      for(let i = 0; i < selections.length; i++){
+        podcastQueueIndex = i; 
+        renderPodcastScripts();
         const seg = selections[i];
         updatePodcastStatus(`Talking through ${seg.headline || 'a top story'}…`);
         await speakText(seg.deepDiveScript || seg.overviewScript || seg.reason || '');
@@ -1491,23 +1492,42 @@
         if(next) beginSongPollForSegment(next);
       }
 
-      podcastQueueIndex=-1; renderPodcastScripts();
+      podcastQueueIndex = -1; 
+      renderPodcastScripts();
       updatePodcastStatus('Podcast finished.');
 
       if(persist && podcastState){
         try{
           await initFirebase();
-          const docRef = await savePodcastEpisode(podcastState);
-          const spinRef = await savePodcastSpin({podcast: podcastState, episodeRef: docRef});
 
-          finalizePodcastEpisode({docRef, selections: podcastState.selections})
-            .then(resolved=>finalizePodcastSpin({docRef: spinRef, selections: resolved || podcastState.selections}))
-            .catch(e=>console.warn('Finalize podcast episode failed:', e));
-        }catch(err){ console.warn('Failed to save podcast episode:', err); }
+          // Reuse pre-saved refs if present, otherwise create them
+          let episodeRef = podcastState.episodeRef;
+          let spinRef = podcastState.spinRef;
+
+          if(!episodeRef){
+            episodeRef = await savePodcastEpisode(podcastState);
+            podcastState.episodeRef = episodeRef;
+          }
+
+          if(!spinRef){
+            spinRef = await savePodcastSpin({ podcast: podcastState, episodeRef });
+            podcastState.spinRef = spinRef;
+          }
+
+          finalizePodcastEpisode({ docRef: episodeRef, selections: podcastState.selections })
+            .then(resolved => finalizePodcastSpin({
+              docRef: spinRef,
+              selections: resolved || podcastState.selections
+            }))
+            .catch(e => console.warn('Finalize podcast episode failed:', e));
+        }catch(err){
+          console.warn('Failed to save podcast episode:', err);
+        }
       }
 
-      podcastIsRunning=false;
+      podcastIsRunning = false;
     }
+
 
     async function subscribeToSongs(){
       if(!db) return;
@@ -1777,19 +1797,29 @@
       updateDockState();
     }
 
-    async function generatePodcastEpisode(){
-      if(podcastIsRunning){ updatePodcastStatus('A podcast is already running.'); return; }
-      if(!headlinesCache.length){ updatePodcastStatus('Load headlines first, then try again.'); return; }
+    async function generatePodcastEpisode({persist=true}={}) {
+      if(podcastIsRunning){ 
+        updatePodcastStatus('A podcast is already running.'); 
+        return; 
+      }
+      if(!headlinesCache.length){ 
+        updatePodcastStatus('Load headlines first, then try again.'); 
+        return; 
+      }
 
-      podcastIsRunning=true;
-      podcastQueueIndex=-1;
+      podcastIsRunning = true;
+      podcastQueueIndex = -1;
       updatePodcastStatus('Asking OpenRouter for a podcast script…');
       renderPodcastScripts();
 
       try{
-        const payload={ stories: headlinesCache };
-        const r=await fetch('/api/generate-podcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-        const body=await r.json().catch(()=>({}));
+        const payload = { stories: headlinesCache };
+        const r = await fetch('/api/generate-podcast', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const body = await r.json().catch(() => ({}));
         if(!r.ok) throw new Error(body?.error || 'Unable to start podcast.');
 
         const selections = Array.isArray(body?.selections) ? body.selections : [];
@@ -1799,18 +1829,42 @@
           createdAtIso: body.createdAtIso || new Date().toISOString(),
         };
 
+        // 🔹 EARLIEST REASONABLE POINT TO SAVE TO FIREBASE
+        let episodeRef = null;
+        let spinRef = null;
+
+        if(persist){
+          try{
+            await initFirebase();
+            episodeRef = await savePodcastEpisode(podcastState);
+            spinRef = await savePodcastSpin({ podcast: podcastState, episodeRef });
+
+            // stash refs so playPodcastQueue can finalize later
+            podcastState.episodeRef = episodeRef;
+            podcastState.spinRef = spinRef;
+          }catch(err){
+            console.warn('Failed to pre-save podcast episode:', err);
+          }
+        }
+
         renderPodcastScripts();
         updatePodcastStatus('Narrating podcast and generating Suno songs…');
-        playPodcastQueue().catch(err=>{
-          console.warn('Podcast playback failed:', err);
-          updatePodcastStatus(err?.message || 'Podcast playback failed.');
-          podcastIsRunning=false;
-        });
+
+        // still pass persist so playPodcastQueue can run finalize step,
+        // but it will re-use episodeRef/spinRef instead of creating new docs
+        playPodcastQueue({persist})
+          .catch(err => {
+            console.warn('Podcast playback failed:', err);
+            updatePodcastStatus(err?.message || 'Podcast playback failed.');
+            podcastIsRunning = false;
+          });
+
       }catch(err){
         updatePodcastStatus(err.message || 'Unable to generate podcast.');
-        podcastIsRunning=false;
+        podcastIsRunning = false;
       }
     }
+
 
     /* ---------- Boot ---------- */
     document.addEventListener('DOMContentLoaded', async ()=>{

@@ -435,14 +435,14 @@ async function planPodcastWithOpenRouter(stories) {
     'Pick exactly three distinct headlines from the provided list to explore in-depth.',
     'Write a short overview script that mentions the breadth of headlines before you dive deeper.',
     'For each chosen headline, propose a tight, spoken-word script (no narration notes, no stage directions).',
-    'Keep everything friendly, vivid, and under 1400 words total. Return pure JSON.',
+    'Keep everything friendly, vivid, and under 1200 words total. Return pure JSON.',
   ].join(' ');
 
   const user = [
     'Create a JSON object describing a podcast episode with these keys:',
     'overview_script: spoken narration that tees up the whole news set.',
     'selections: array of exactly three objects with {headline, source, reason, host_script}.',
-    'Each selected headline must appear exactly as given. host_script should be 120-220 words.',
+    'Each selected headline must appear exactly as given. host_script should be 100-200 words.',
     'Make sure overview_script is 160-260 words and references multiple headlines.',
     '',
     'Headlines:',
@@ -533,10 +533,8 @@ async function writeDeepDiveScript({ headline, source, articleText }) {
 
   const truncated = articleText.length > 16000 ? `${articleText.slice(0, 16000)}…` : articleText;
   const system = [
-    'You are a podcast script writer.',
     'Write an engaging, conversational script that summarizes the full article for listeners.',
     'Keep it punchy, spoken aloud ready, 130-230 words, no bullet lists, no stage directions.',
-    'Close with a natural line that leads into playing a short AI-generated song.',
   ].join(' ');
 
   const user = [
