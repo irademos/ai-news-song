@@ -2093,30 +2093,32 @@
       updateDockState();
     }
 
-    async function generatePodcastEpisode({persist=true}={}) {
-      if(podcastIsRunning){ 
-        updatePodcastStatus('A podcast is already running.'); 
-        return; 
+    async function generatePodcastEpisode({ persist = true } = {}) {
+      if (podcastIsRunning) {
+        updatePodcastStatus('A podcast is already running.');
+        return;
       }
-      if(!headlinesCache.length){ 
-        updatePodcastStatus('Load headlines first, then try again.'); 
-        return; 
+      if (!headlinesCache.length) {
+        updatePodcastStatus('Load headlines first, then try again.');
+        return;
       }
 
       podcastIsRunning = true;
       podcastQueueIndex = -1;
       updatePodcastStatus('Asking OpenRouter for a podcast script…');
       renderPodcastScripts();
+      updatePodcastControlButtons();
 
-      try{
+      try {
         const payload = { stories: headlinesCache };
-        const r = await fetch('/api/generate-podcast', {
+        // 🔹 FAST PLAN PHASE: get overview & host scripts asap
+        const r = await fetch('/api/generate-podcast?phase=plan', {
           method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify(payload)
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
         });
         const body = await r.json().catch(() => ({}));
-        if(!r.ok) throw new Error(body?.error || 'Unable to start podcast.');
+        if (!r.ok) throw new Error(body?.error || 'Unable to start podcast.');
 
         const selections = Array.isArray(body?.selections) ? body.selections : [];
         podcastState = {
@@ -2126,20 +2128,18 @@
         };
         currentPodcastStep = 0;
 
-        // 🔹 EARLIEST REASONABLE POINT TO SAVE TO FIREBASE
+        // 🔹 Pre-save to Firebase as you already do
         let episodeRef = null;
         let spinRef = null;
-
-        if(persist){
-          try{
+        if (persist) {
+          try {
             await initFirebase();
             episodeRef = await savePodcastEpisode(podcastState);
             spinRef = await savePodcastSpin({ podcast: podcastState, episodeRef });
 
-            // stash refs so playPodcastQueue can finalize later
             podcastState.episodeRef = episodeRef;
             podcastState.spinRef = spinRef;
-          }catch(err){
+          } catch (err) {
             console.warn('Failed to pre-save podcast episode:', err);
           }
         }
@@ -2148,22 +2148,45 @@
         updatePodcastControlButtons();
         updatePodcastStatus('Narrating podcast and generating Suno songs…');
 
-        // still pass persist so playPodcastQueue can run finalize step,
-        // but it will re-use episodeRef/spinRef instead of creating new docs
-        playPodcastQueue({persist})
-          .catch(err => {
-            console.warn('Podcast playback failed:', err);
-            updatePodcastStatus(err?.message || 'Podcast playback failed.');
-            podcastIsRunning = false;
-            updatePodcastControlButtons();
-          });
+        // 🔹 Kick off full generation in the background (deep dives + Suno)
+        (async () => {
+          try {
+            const rFull = await fetch('/api/generate-podcast', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const fullBody = await rFull.json().catch(() => ({}));
+            if (!rFull.ok) throw new Error(fullBody?.error || 'Unable to finish podcast generation.');
 
-      }catch(err){
+            const fullSelections = Array.isArray(fullBody?.selections)
+              ? fullBody.selections
+              : [];
+
+            // Replace selections in-place so playPodcastQueue sees richer data
+            if (podcastState) {
+              podcastState.selections = fullSelections;
+              renderPodcastScripts();
+            }
+          } catch (err) {
+            console.warn('Background podcast enrichment failed:', err);
+          }
+        })();
+
+        // 🔹 Start playback immediately using overviewScript + host scripts
+        playPodcastQueue({ persist }).catch((err) => {
+          console.warn('Podcast playback failed:', err);
+          updatePodcastStatus(err?.message || 'Podcast playback failed.');
+          podcastIsRunning = false;
+          updatePodcastControlButtons();
+        });
+      } catch (err) {
         updatePodcastStatus(err.message || 'Unable to generate podcast.');
         podcastIsRunning = false;
         updatePodcastControlButtons();
       }
     }
+
 
 
     /* ---------- Boot ---------- */

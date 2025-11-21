@@ -102,7 +102,6 @@ async function callOpenRouterOnce({ model, messages, timeoutMs = 20000 }) {
       throw err;
     }
 
-    console.log(res);
     const json = await res.json();
     const content = json?.choices?.[0]?.message?.content?.trim();
     if (!content) throw new Error('OpenRouter did not return content');
@@ -269,11 +268,9 @@ app.post('/api/article-content', async (req, res) => {
 function enforcePromptLimit(text, max = SUNO_PROMPT_MAX_CHARS) {
   if (typeof text !== 'string') return '';
   const normalised = text.replace(/\s+$/g, '').trim();
-  console.log("promptLimit:", normalised.length, normalised);
   if (normalised.length <= max) {
     return normalised;
   }
-  console.log("sliced:", `${normalised.slice(0, max - 1).trimEnd()}…`);
   return `${normalised.slice(0, max - 1).trimEnd()}…`;
 }
 
@@ -321,10 +318,10 @@ function normalizeHeadlineKey(text) {
 
 async function summarizeArticleWithOpenRouter({ headline, source, articleText }) {
   const apiKey = process.env.OPEN_ROUTER_KEY;
+  console.log("getting lyrics for ", headline, source);
   if (!apiKey) {
     throw new Error('OpenRouter API key is not configured.');
   }
-  console.log("text3", articleText);
 
   if (!articleText) {
     throw new Error('No article content was provided for summarisation.');
@@ -357,15 +354,12 @@ async function summarizeArticleWithOpenRouter({ headline, source, articleText })
 
   const errors = [];
   let response = "";
-  console.log(messages);
   for (const model of LYRIC_MODELS) {
     console.log("trying model:", model);
     try {
-      response = await callOpenRouterWithRetries({ model, messages, attempts: 3 });
-      console.log("lyrics:", response, "test:", /\w/.test(response));
+      response = await callOpenRouterWithRetries({ model, messages, attempts: 1 });
       break;
     } catch (e) {
-      console.log(model, e);
       errors.push(`[${model}] ${e.message}`);
       continue;
     }
@@ -374,6 +368,7 @@ async function summarizeArticleWithOpenRouter({ headline, source, articleText })
   if (!response) {
     throw new Error('no response from openrouter');
   }
+  console.log("get lyrics success.")
 
   return enforcePromptLimit(response, SUNO_PROMPT_MAX_CHARS);
 }
@@ -397,11 +392,9 @@ async function generateLyricsWithOpenRouter(stories) {
   for (const model of LYRIC_MODELS) {
     console.log("trying model:", model);
     try {
-      const lyrics = await callOpenRouterWithRetries({ model, messages, attempts: 3 });
-      console.log("lyrics:", lyrics, "test:", /\w/.test(lyrics));
+      const lyrics = await callOpenRouterWithRetries({ model, messages, attempts: 1 });
       if (lyrics && /\w/.test(lyrics)) return enforcePromptLimit(lyrics);
     } catch (e) {
-      console.log(model, e);
       errors.push(`[${model}] ${e.message}`);
       continue;
     }
@@ -412,6 +405,7 @@ async function generateLyricsWithOpenRouter(stories) {
     `${newsDigest}`,
   ].join('\n');
 
+  console.log("get lyrics success")
   return enforcePromptLimit(fallback);
 }
 
@@ -428,7 +422,7 @@ function scoreSimilarity(a, b) {
 
 async function planPodcastWithOpenRouter(stories) {
   if (!stories?.length) throw new Error('At least one story is required to plan a podcast.');
-
+  console.log("getting podcast plan");
   const digest = formatStoriesForModel(stories);
   const system = [
     'You are a podcast host crafting an energetic but concise script about the news.',
@@ -457,16 +451,13 @@ async function planPodcastWithOpenRouter(stories) {
   for (const model of LYRIC_MODELS) {
     console.log("trying model:", model);
     try {
-      raw = await callOpenRouterWithRetries({ model, messages, attempts: 3 });
-      console.log("podcast:", raw);
+      raw = await callOpenRouterWithRetries({ model, messages, attempts: 1 });
       break;
     } catch (e) {
-      console.log(model, e);
       // errors.push(`[${model}] ${e.message}`);
       continue;
     }
   }
-  // const raw = await callOpenRouterWithRetries({ model: PODCAST_PLANNER_MODEL, messages, attempts: 3 });
   const parsed = extractJsonFromString(raw);
 
   if (!parsed || typeof parsed !== 'object') {
@@ -529,6 +520,7 @@ async function planPodcastWithOpenRouter(stories) {
 }
 
 async function writeDeepDiveScript({ headline, source, articleText }) {
+  console.log("getting deep dive for", headline);
   if (!articleText) throw new Error('Full article text is required for a deep dive script.');
 
   const truncated = articleText.length > 16000 ? `${articleText.slice(0, 16000)}…` : articleText;
@@ -550,11 +542,12 @@ async function writeDeepDiveScript({ headline, source, articleText }) {
     { role: 'user', content: user },
   ];
 
-  const raw = await callOpenRouterWithRetries({ model: PODCAST_PLANNER_MODEL, messages, attempts: 3 });
+  const raw = await callOpenRouterWithRetries({ model: PODCAST_PLANNER_MODEL, messages, attempts: 1 });
   return enforcePromptLimit(raw);
 }
 
 async function createSunoTaskFromScript({ articleTxt, headline, source, tags }) {
+  console.log("getting suno song for", headline);
   let lyrics;
   try {
     lyrics = await summarizeArticleWithOpenRouter({
@@ -610,39 +603,6 @@ async function createSunoTaskFromScript({ articleTxt, headline, source, tags }) 
   return { taskIds: [...new Set(taskIds)], clipIds: [...new Set(clipIds)] };
 }
 
-async function generateSongFromNews() {
-  const createRes = await fetch('/api/generate-song', { method: 'POST' });
-  if (createRes.status !== 202) {
-    const err = await createRes.json().catch(() => ({}));
-    throw new Error(err.error || 'Create failed');
-  }
-
-  const { clip_ids } = await createRes.json();
-  const audio = await pollForAudio(clip_ids);
-  return audio; // { clip_id, audio_url, ... }
-}
-
-async function pollForAudio(clipIds, { timeoutMs = 120000, intervalMs = 2500 } = {}) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const qs = encodeURIComponent(clipIds.join(','));
-    const r = await fetch(`/api/song-status?clip_ids=${qs}`);
-    const { data = [] } = await r.json();
-
-    const ready = data.find(d => d.state === 'succeeded' && d.audio_url);
-    if (ready) {
-      return {
-        ...ready,
-        audio_url: normalizeSunoAudioUrl(ready.audio_url),
-      };
-    }
-
-    await new Promise(res => setTimeout(res, intervalMs));
-  }
-  throw new Error('Timed out waiting for Suno audio');
-}
-
-
 // POST /api/generate-song
 app.post('/api/generate-song', async (req, res) => {
   const sunoApiKey = process.env.suno_api || process.env.SUNO_API || process.env.SUNO_API_KEY;
@@ -692,7 +652,6 @@ app.post('/api/generate-song', async (req, res) => {
   }
 
   const prompt = enforcePromptLimit(preparedLyrics);
-  console.log('Suno prompt (lyrics) length:', prompt.length);
 
   const sunoPayload = {
     custom_mode: true,
@@ -748,7 +707,12 @@ app.post('/api/generate-podcast', async (req, res) => {
   }
 
   const stories = Array.isArray(req.body?.stories) ? req.body.stories : [];
-  if (!stories.length) return res.status(400).json({ error: 'At least one headline is required to build a podcast.' });
+  if (!stories.length) {
+    return res.status(400).json({ error: 'At least one headline is required to build a podcast.' });
+  }
+
+  const phase = (req.query.phase || 'full').toLowerCase(); // 'plan' | 'full'
+  const tags = typeof req.body?.tags === 'string' ? req.body.tags.trim() : '';
 
   try {
     const plan = await planPodcastWithOpenRouter(stories);
@@ -756,7 +720,10 @@ app.post('/api/generate-podcast', async (req, res) => {
     const storyLookup = new Map(stories.map((s) => [normalizeHeadlineKey(s.headline), s]));
     const selectedStories = plan.selections.map((sel) => {
       const key = normalizeHeadlineKey(sel.headline);
-      const match = storyLookup.get(key) || stories.find((s) => normalizeHeadlineKey(s.headline) === key) || {};
+      const match =
+        storyLookup.get(key) ||
+        stories.find((s) => normalizeHeadlineKey(s.headline) === key) ||
+        {};
       return {
         ...match,
         headline: match.headline || sel.headline,
@@ -766,6 +733,34 @@ app.post('/api/generate-podcast', async (req, res) => {
       };
     });
 
+    // 🔹 FAST PHASE: send overview + host scripts only, no deep dives, no Suno tasks
+    if (phase === 'plan') {
+      console.log("fast phase");
+      const selections = selectedStories.map((story) => ({
+        headline: story.headline,
+        source: story.source || '',
+        summary: story.summary || '',
+        link: story.link || '',
+        reason: story.reason || '',
+        overviewScript: story.host_script || '',
+        // we’ll upgrade this later when full generation finishes
+        deepDiveScript: story.host_script || '',
+        articleContent: '',
+        songPrompt: '',
+        songTaskIds: [],
+        songClipIds: [],
+        tags,
+      }));
+
+      return res.json({
+        overviewScript: plan.overviewScript,
+        selections,
+        createdAtIso: new Date().toISOString(),
+      });
+    }
+
+    // 🔹 FULL PHASE: existing heavy logic (deep dives + Suno)
+    console.log("full phase");
     const deepDiveScripts = [];
     for (const story of selectedStories) {
       let articleText = '';
@@ -788,7 +783,6 @@ app.post('/api/generate-podcast', async (req, res) => {
     }
 
     const selections = [];
-    const tags = typeof req.body?.tags === 'string' ? req.body.tags.trim() : '';
 
     for (const story of selectedStories) {
       const deep = deepDiveScripts.find((entry) => entry.headline === story.headline) || {};
@@ -796,7 +790,9 @@ app.post('/api/generate-podcast', async (req, res) => {
         'Create a short, melodic track inspired by this news story for a podcast music bed.',
         'Keep it modern and catchy. Lyrics should echo key details and stay under 900 characters.',
         deep.script || story.host_script,
-      ].filter(Boolean).join('\n\n');
+      ]
+        .filter(Boolean)
+        .join('\n\n');
 
       const articleTxt = deep.articleContent;
       const hdline = deep.headline;
@@ -809,7 +805,7 @@ app.post('/api/generate-podcast', async (req, res) => {
         tags,
       });
 
-      if(tasks) {
+      if (tasks) {
         selections.push({
           headline: story.headline,
           source: story.source || '',
@@ -824,7 +820,7 @@ app.post('/api/generate-podcast', async (req, res) => {
           songClipIds: tasks.clipIds || [],
           tags,
         });
-      };
+      }
     }
 
     res.json({
@@ -834,9 +830,12 @@ app.post('/api/generate-podcast', async (req, res) => {
     });
   } catch (error) {
     console.error('Podcast generation failed:', error);
-    res.status(502).json({ error: 'Unable to generate podcast.', details: error.message });
+    res
+      .status(502)
+      .json({ error: 'Unable to generate podcast.', details: error.message });
   }
 });
+
 
 
 function parseIds(value) {
@@ -1008,9 +1007,9 @@ if (require.main === module) {
         console.log("Today's headlines:");
         stories.forEach((story, index) => {
           console.log(`\n${index + 1}. ${story.headline}`);
-          if (story.summary) {
-            console.log(`   Summary: ${story.summary}`);
-          }
+          // if (story.summary) {
+          //   console.log(`   Summary: ${story.summary}`);
+          // }
         });
       })
       .catch((error) => {
