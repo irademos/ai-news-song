@@ -702,10 +702,15 @@
     const formatDate = d => d instanceof Date && !Number.isNaN(d) ? d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}) : '';
     const formatTime = d => d instanceof Date && !Number.isNaN(d) ? d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}) : '';
     const formatDateTime = d => { const a=formatDate(d), b=formatTime(d); return a&&b?`${a} • ${b}`:a||b||'Generated' };
+    const coerceDate = (ts, iso)=>{
+      if(ts && typeof ts.toDate==='function'){ try{ return ts.toDate() }catch{}}
+      if(typeof iso==='string'){ const d=new Date(iso); if(!Number.isNaN(d)) return d; }
+      return null;
+    };
 
     /* ---------- State ---------- */
     let db=null, firebaseInitPromise=null;
-    let songsCache=[], currentSongId=null, unsubscribeSongs=null;
+    let songsCache=[], spinsCache=[], podcastsCache=[], currentSongId=null, unsubscribeSongs=null, unsubscribePodcasts=null;
     let headlinesCache=[], groupedHeadlines=new Map(), headlineViewMode='sources', selectedHeadlineSource=null;
     let currentHeadlineKey=null, selectedStory=null, latestArticleContent='', latestSummary='', isGenerating=false;
     let podcastState=null, podcastIsRunning=false, podcastQueueIndex=-1;
@@ -1461,6 +1466,106 @@
       return seg.songPromise;
     }
 
+    function mapSpinDocument(doc){
+      const d=doc.data();
+      const createdAt = coerceDate(d.createdAt, d.generatedAtIso);
+
+      const rawAudioUrl = sanitizeAudioUrl(d.audioUrl);
+      const rawStreamUrl = sanitizeAudioUrl(d.streamUrl);
+      const img = sanitizeImageUrl(d.imageUrl || d.image_url || '');
+      const storedTaskIds = Array.isArray(d.taskIds) ? d.taskIds.map(v=>typeof v==='string'?v.trim():'').filter(Boolean) : [];
+      const primaryTaskId = typeof d.primaryTaskId==='string' ? d.primaryTaskId.trim() : storedTaskIds[0] || '';
+
+      return {
+        id: doc.id,
+        title: d.title || d.sunoTitle || 'Daily Spin (Suno)',
+        sunoTitle: d.sunoTitle || d.title || 'Daily Spin (Suno)',
+        artist: d.artist || d.sunoArtist || 'Suno AI',
+        sunoArtist: d.sunoArtist || d.artist || 'Suno AI',
+        kind: d.kind || 'song',
+        lyrics: d.lyrics || d.prompt || d.podcastOverview || '',
+        audioUrl: rawAudioUrl || rawStreamUrl,
+        streamUrl: rawStreamUrl,
+        imageUrl: img,
+        createdAt,
+        prompt: d.prompt || '',
+        articleHeadline: d.articleHeadline || '',
+        articleSummary: d.articleSummary || d.prompt || d.podcastOverview || '',
+        articleSource: d.articleSource || '',
+        articleUrl: d.articleUrl || '',
+        articleContent: d.articleContent || d.podcastOverview || '',
+        tags: typeof d.tags==='string' ? d.tags.trim() : '',
+        taskIds: storedTaskIds,
+        primaryTaskId,
+        podcastOverview: d.podcastOverview || '',
+        podcastSelections: Array.isArray(d.podcastSelections) ? d.podcastSelections : [],
+        podcastId: d.podcastId || '',
+      };
+    }
+
+    function mapPodcastDocument(doc){
+      const d = doc.data();
+      const createdAt = coerceDate(d.createdAt, d.generatedAtIso);
+      const selections = Array.isArray(d.selections) ? d.selections : [];
+      const primary = pickPrimaryPodcastSong(selections);
+
+      const headline = primary.headline || selections[0]?.headline || 'Daily Spin Podcast';
+      const source = selections[0]?.source || 'Podcast';
+      const overview = d.overviewScript || '';
+
+      return {
+        id: doc.id,
+        title: 'Daily Spin Podcast',
+        sunoTitle: 'Daily Spin Podcast',
+        artist: 'Daily Spin',
+        sunoArtist: 'Daily Spin',
+        kind: 'podcast',
+        lyrics: overview,
+        audioUrl: primary.audioUrl || primary.streamUrl || '',
+        streamUrl: primary.streamUrl || '',
+        imageUrl: primary.imageUrl || '',
+        createdAt,
+        prompt: overview,
+        articleHeadline: headline,
+        articleSummary: overview || '',
+        articleSource: source,
+        articleUrl: selections[0]?.link || '',
+        articleContent: overview || '',
+        tags: '',
+        taskIds: Array.isArray(primary.taskIds) ? primary.taskIds : [],
+        primaryTaskId: (primary.taskIds || [])[0] || '',
+        podcastOverview: overview,
+        podcastSelections: selections,
+        podcastId: doc.id,
+      };
+    }
+
+    function mergeRecentItems(){
+      const seen = new Set();
+      const merged = [];
+
+      [...spinsCache, ...podcastsCache].forEach(item=>{
+        if(!item) return;
+        const key = `${item.kind || 'song'}:${item.podcastId || item.id || ''}`;
+        if(seen.has(key)) return;
+        if(item.kind==='podcast'){
+          if(!(item.podcastOverview || (item.podcastSelections||[]).length)) return;
+        } else if(!item.audioUrl){
+          return;
+        }
+        seen.add(key);
+        merged.push(item);
+      });
+
+      merged.sort((a,b)=>{
+        const aTime = a?.createdAt instanceof Date ? a.createdAt.getTime() : 0;
+        const bTime = b?.createdAt instanceof Date ? b.createdAt.getTime() : 0;
+        return bTime - aTime;
+      });
+
+      return merged;
+    }
+
     async function playPodcastQueue({persist=true}={}) {
       if(!podcastState) return;
       podcastIsRunning = true;
@@ -1532,63 +1637,45 @@
     async function subscribeToSongs(){
       if(!db) return;
       if(unsubscribeSongs) unsubscribeSongs();
+      if(unsubscribePodcasts) unsubscribePodcasts();
 
       const songsRef=collection(db,'spins');
-      const q=query(songsRef, orderBy('createdAt','desc'), limit(50));
+      const songsQuery=query(songsRef, orderBy('createdAt','desc'), limit(50));
+      const podcastsRef = collection(db,'podcasts');
+      const podcastsQuery = query(podcastsRef, orderBy('createdAt','desc'), limit(50));
 
-      unsubscribeSongs = onSnapshot(q, (snap)=>{
-        const songs = snap.docs
-          .map(doc=>{
-            const d=doc.data();
-            const createdAt = (d.createdAt && typeof d.createdAt.toDate==='function') ? d.createdAt.toDate()
-                             : d.generatedAtIso ? new Date(d.generatedAtIso) : null;
+      const refreshList = (opts={})=>{
+        const merged = mergeRecentItems();
 
-            const rawAudioUrl = sanitizeAudioUrl(d.audioUrl);
-            const rawStreamUrl = sanitizeAudioUrl(d.streamUrl);
-            const img = sanitizeImageUrl(d.imageUrl || d.image_url || '');
-            const storedTaskIds = Array.isArray(d.taskIds) ? d.taskIds.map(v=>typeof v==='string'?v.trim():'').filter(Boolean) : [];
-            const primaryTaskId = typeof d.primaryTaskId==='string' ? d.primaryTaskId.trim() : storedTaskIds[0] || '';
-
-            return {
-              id: doc.id,
-              title: d.title || d.sunoTitle || 'Daily Spin (Suno)',
-              sunoTitle: d.sunoTitle || d.title || 'Daily Spin (Suno)',
-              artist: d.artist || d.sunoArtist || 'Suno AI',
-              sunoArtist: d.sunoArtist || d.artist || 'Suno AI',
-              kind: d.kind || 'song',
-              lyrics: d.lyrics || d.prompt || d.podcastOverview || '',
-              audioUrl: rawAudioUrl || rawStreamUrl,
-              streamUrl: rawStreamUrl,
-              imageUrl: img,
-              createdAt,
-              prompt: d.prompt || '',
-              articleHeadline: d.articleHeadline || '',
-              articleSummary: d.articleSummary || d.prompt || d.podcastOverview || '',
-              articleSource: d.articleSource || '',
-              articleUrl: d.articleUrl || '',
-              articleContent: d.articleContent || d.podcastOverview || '',
-              tags: typeof d.tags==='string' ? d.tags.trim() : '',
-              taskIds: storedTaskIds,
-              primaryTaskId,
-              podcastOverview: d.podcastOverview || '',
-              podcastSelections: Array.isArray(d.podcastSelections) ? d.podcastSelections : [],
-              podcastId: d.podcastId || '',
-            };
-          })
-          .filter(s=>Boolean(s.audioUrl));
-
-        if(!songs.length){
+        if(!merged.length){
           currentSongId=null; songsCache=[];
-          showListEmptyState('songList','No Suno songs have been generated yet. Be the first to spin one!');
-          resetNowPlaying(); return;
+          showListEmptyState('songList', opts.errorMessage || 'No spins or podcasts have been generated yet. Be the first to spin one!');
+          resetNowPlaying();
+          return;
         }
 
-        renderSongList(songs);
-        const selected = currentSongId ? songs.find(s=>s.id===currentSongId) : null;
-        setCurrentSong(selected || songs[0]);
+        songsCache = merged;
+        renderSongList(merged);
+        const selected = currentSongId ? merged.find(s=>s.id===currentSongId) : null;
+        setCurrentSong(selected || merged[0]);
+      };
+
+      unsubscribeSongs = onSnapshot(songsQuery, (snap)=>{
+        spinsCache = snap.docs
+          .map(mapSpinDocument)
+          .filter(s=>Boolean(s.audioUrl));
+        refreshList();
       }, (err)=>{
         console.error('Firebase load error:',err);
-        showListEmptyState('songList','Unable to load recent spins right now.');
+        refreshList({errorMessage:'Unable to load recent spins right now.'});
+      });
+
+      unsubscribePodcasts = onSnapshot(podcastsQuery, (snap)=>{
+        podcastsCache = snap.docs.map(mapPodcastDocument);
+        refreshList();
+      }, (err)=>{
+        console.error('Firebase podcast load error:',err);
+        refreshList({errorMessage:'Unable to load recent spins right now.'});
       });
     }
 
