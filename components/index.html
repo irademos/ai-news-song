@@ -18,7 +18,7 @@
       --text:#f8fafc;
       --muted:#94a3b8;
       --mobile-nav-height:64px;
-      --mobile-audio-height: 56px;
+      --mobile-audio-height: 110px;
       font-family:"Inter","Segoe UI",Roboto,system-ui,-apple-system,sans-serif;
     }
     *{ box-sizing:border-box }
@@ -365,6 +365,40 @@
       }
     }
 
+    #dockedAudio{
+      display:flex;
+      flex-direction:column;
+      gap:.35rem;
+    }
+    .podcast-controls{
+      display:flex;
+      align-items:center;
+      gap:.5rem;
+    }
+    .podcast-controls button{
+      flex:0 0 auto;
+      border:1px solid rgba(148,163,184,.25);
+      background:rgba(15,23,42,.65);
+      color:var(--text);
+      border-radius:12px;
+      padding:.55rem .85rem;
+      font-weight:600;
+      letter-spacing:.01em;
+      cursor:pointer;
+      transition:background .2s ease, border-color .2s ease, transform .15s ease;
+    }
+    .podcast-controls button:hover:not(:disabled){
+      background:rgba(245,158,11,.16);
+      border-color:rgba(245,158,11,.5);
+      transform:translateY(-1px);
+    }
+    .podcast-controls button:disabled{
+      opacity:.6;
+      cursor:not-allowed;
+    }
+    .podcast-controls__spacer{ flex:1 1 auto; }
+
+
     #songTitle {
       font-size: clamp(1.9rem, 5vw, 1.5rem);  /* smaller, responsive */
       line-height: 1.3;
@@ -424,16 +458,17 @@
         left: max(1rem, env(safe-area-inset-left));
         right: max(1rem, env(safe-area-inset-right));
         bottom: calc(var(--mobile-nav-height) + max(0.75rem, env(safe-area-inset-bottom)) + 0.5rem);
-        height: var(--mobile-audio-height);
+        min-height: var(--mobile-audio-height);
         z-index: 60; /* above nav (which is 50) */
         border-radius: 14px;
         background: rgba(15,23,42,.95);
         border: 1px solid rgba(148,163,184,.15);
         box-shadow: 0 -12px 28px rgba(15,23,42,.35);
+        padding: .6rem;
       }
       #dockedAudio audio{
         width:100%;
-        height:100%;                     /* fill the dock vertically */
+        height:56px;
         display:block;
         border-radius:12px;
         background:rgba(15,23,42,.6);
@@ -608,6 +643,12 @@
   </div>
 
   <div id="dockedAudio">
+    <div class="podcast-controls" aria-label="Podcast playback controls">
+      <button type="button" id="podcastPrevButton" aria-label="Previous podcast section" disabled>Prev</button>
+      <button type="button" id="podcastPlayPauseButton" aria-label="Pause or resume podcast narration" disabled>Pause</button>
+      <div class="podcast-controls__spacer" aria-hidden="true"></div>
+      <button type="button" id="podcastNextButton" aria-label="Next podcast section" disabled>Next</button>
+    </div>
     <audio id="audioPlayer" controls preload="none">
       <source id="audioSource" src="" type="audio/mpeg" />
       Your browser does not support the audio element.
@@ -713,8 +754,10 @@
     let songsCache=[], spinsCache=[], podcastsCache=[], currentSongId=null, unsubscribeSongs=null, unsubscribePodcasts=null;
     let headlinesCache=[], groupedHeadlines=new Map(), headlineViewMode='sources', selectedHeadlineSource=null;
     let currentHeadlineKey=null, selectedStory=null, latestArticleContent='', latestSummary='', isGenerating=false;
-    let podcastState=null, podcastIsRunning=false, podcastQueueIndex=-1;
+    let podcastState=null, podcastIsRunning=false, podcastQueueIndex=-1, podcastNavRequest=null, currentPodcastStep=-1;
     let generateSongButton=null, generatePodcastButton=null, genreSelect=null, customTagsInput=null, activeContentTab='article';
+    let podcastPrevButton=null, podcastNextButton=null, podcastPlayPauseButton=null;
+    let currentNarrationResolver=null, currentClipResolver=null;
 
     /* ---------- DOM Helpers ---------- */
     const $ = sel => document.querySelector(sel);
@@ -724,6 +767,9 @@
     if (audio){
       ['loadeddata','emptied','abort','error'].forEach(evt=>{
         audio.addEventListener(evt, updateDockState);
+      });
+      ['play','pause','ended'].forEach(evt=>{
+        audio.addEventListener(evt, updatePodcastControlButtons);
       });
     }
 
@@ -811,21 +857,89 @@
       document.body.classList.toggle('has-audio', !!src);
     }
 
+    const getPodcastStepCount = ()=>{
+      if(!podcastState) return 0;
+      const selectionsCount = Array.isArray(podcastState.selections) ? podcastState.selections.length : 0;
+      return (podcastState.overviewScript ? 1 : 0) + selectionsCount;
+    };
+
+    const takePodcastNavRequest = ()=>{
+      const dir = podcastNavRequest;
+      podcastNavRequest = null;
+      return dir;
+    };
+
+    function updatePodcastControlButtons(){
+      const total = getPodcastStepCount();
+      const hasPodcast = total > 0;
+      const player = document.getElementById('audioPlayer');
+      const isPaused = player ? player.paused : true;
+
+      if(podcastPlayPauseButton){
+        podcastPlayPauseButton.disabled = !hasPodcast;
+        podcastPlayPauseButton.textContent = isPaused ? 'Play' : 'Pause';
+      }
+
+      const atFirst = currentPodcastStep <= 0;
+      const atLast = currentPodcastStep >= total - 1;
+
+      if(podcastPrevButton) podcastPrevButton.disabled = !hasPodcast || !podcastIsRunning || atFirst;
+      if(podcastNextButton) podcastNextButton.disabled = !hasPodcast || !podcastIsRunning || atLast;
+    }
+
+    function requestPodcastNavigation(direction){
+      if(!podcastIsRunning || !podcastState) return;
+      podcastNavRequest = direction;
+
+      if(currentNarrationResolver){
+        currentNarrationResolver({nav: direction});
+        currentNarrationResolver = null;
+      }
+
+      if(currentClipResolver){
+        currentClipResolver();
+        currentClipResolver = null;
+      }
+
+      try { currentAudio?.pause(); } catch {}
+      const player = document.getElementById('audioPlayer');
+      player?.pause?.();
+
+      updatePodcastControlButtons();
+    }
+
+    function togglePodcastPause(){
+      const player = document.getElementById('audioPlayer');
+      if(!player) return;
+      if(player.paused){ player.play().catch(()=>{}); }
+      else { player.pause(); }
+      updatePodcastControlButtons();
+    }
+
     /* ---------- Podcast helpers ---------- */
     let currentAudio = null;
 
     async function speakText(text) {
       return new Promise(async (resolve) => {
-        if (!text) {
-          resolve();
-          return;
-        }
+        if (!text) { resolve({}); return; }
 
         // Stop any existing playback
         if (currentAudio) {
           try { currentAudio.pause(); } catch {}
           currentAudio = null;
         }
+
+        const audioEl = document.getElementById('audioPlayer');
+        const audioSource = document.getElementById('audioSource');
+
+        let finished = false;
+        const settle = (payload={}) => {
+          if (finished) return;
+          finished = true;
+          currentNarrationResolver = null;
+          currentAudio = null;
+          resolve(payload);
+        };
 
         try {
           // Create TTS audio using OpenAI alloy voice via Puter
@@ -837,22 +951,56 @@
             instructions: "Sound clear and friendly.",
           });
 
-          currentAudio = audio;
+          const src = audio?.src || '';
+          const useDockedPlayer = !!(audioEl && src);
 
-          audio.onended = () => {
-            currentAudio = null;
-            resolve();
-          };
+          if (useDockedPlayer) {
+            const onEnd = () => settle({});
+            const onError = () => settle({});
 
-          audio.onerror = () => {
-            currentAudio = null;
-            resolve();
-          };
+            if (audioSource) {
+              audioSource.src = src;
+            } else if (audioEl) {
+              audioEl.src = src;
+            }
 
-          audio.play();
+            audioEl?.load();
+            currentAudio = audioEl;
+
+            audioEl?.addEventListener('ended', onEnd);
+            audioEl?.addEventListener('error', onError);
+
+            const cleanup = () => {
+              audioEl?.removeEventListener('ended', onEnd);
+              audioEl?.removeEventListener('error', onError);
+            };
+
+            currentNarrationResolver = (payload={}) => {
+              cleanup();
+              try { audioEl?.pause(); } catch {}
+              settle(payload);
+            };
+
+            audioEl?.play()?.catch(()=> settle({}));
+            updateDockState();
+          } else {
+            currentAudio = audio;
+
+            audio.onended = () => settle({});
+            audio.onerror = () => settle({});
+
+            currentNarrationResolver = (payload={}) => {
+              audio.onended = null;
+              audio.onerror = null;
+              try { audio.pause(); } catch {}
+              settle(payload);
+            };
+
+            audio.play();
+          }
         } catch (err) {
           console.error("Puter/OpenAI TTS error:", err);
-          resolve();
+          settle({});
         }
       });
     }
@@ -888,10 +1036,22 @@
         if(!src){ resolve(); return; }
         $('#audioSource').src = src;
         $('#audioPlayer').load();
-        const onEnd=()=>{ audio?.removeEventListener('ended', onEnd); audio?.removeEventListener('error', onEnd); resolve(); };
-        audio?.addEventListener('ended', onEnd);
-        audio?.addEventListener('error', onEnd);
-        audio?.play().catch(()=>resolve());
+
+        let finished=false;
+        const finish=()=>{
+          if(finished) return;
+          finished=true;
+          audio?.removeEventListener('ended', finish);
+          audio?.removeEventListener('error', finish);
+          currentClipResolver = null;
+          resolve();
+        };
+
+        currentClipResolver = finish;
+
+        audio?.addEventListener('ended', finish);
+        audio?.addEventListener('error', finish);
+        audio?.play().catch(()=>finish());
         updateDockState();
       });
     }
@@ -996,6 +1156,9 @@
       setActiveTab('article'); updateGenerateButton({disabled:true, text:'Generate Song'});
 
       updateDockState();
+      currentPodcastStep = -1;
+      podcastNavRequest = null;
+      updatePodcastControlButtons();
     }
 
     async function fetchAndDisplayArticle(story){
@@ -1570,36 +1733,77 @@
       if(!podcastState) return;
       podcastIsRunning = true;
       podcastQueueIndex = -1;
-      renderPodcastScripts();
+      podcastNavRequest = null;
 
-      const selections = podcastState.selections || [];
+      const selections = Array.isArray(podcastState.selections) ? podcastState.selections : [];
+      const steps = [];
+
+      if(podcastState.overviewScript){
+        steps.push({ type: 'overview', script: podcastState.overviewScript });
+      }
+      selections.forEach((seg, idx)=> steps.push({ type: 'segment', seg, index: idx }));
+
       if(selections[0]) beginSongPollForSegment(selections[0]);
 
+      let stepIndex = Math.max(0, currentPodcastStep >=0 ? currentPodcastStep : 0);
+      if(stepIndex >= steps.length) stepIndex = 0;
+
       updatePodcastStatus('Starting podcast narration…');
-      if(podcastState.overviewScript){
-        await speakText(podcastState.overviewScript);
-      }
+      renderPodcastScripts();
+      updatePodcastControlButtons();
 
-      for(let i = 0; i < selections.length; i++){
-        podcastQueueIndex = i; 
-        renderPodcastScripts();
-        const seg = selections[i];
-        updatePodcastStatus(`Talking through ${seg.headline || 'a top story'}…`);
-        await speakText(seg.deepDiveScript || seg.overviewScript || seg.reason || '');
+      while(stepIndex < steps.length){
+        const step = steps[stepIndex];
+        currentPodcastStep = stepIndex;
+        updatePodcastControlButtons();
 
-        const song = await beginSongPollForSegment(seg);
-        if(song && (song.audioUrl || song.streamUrl)){
-          updatePodcastStatus('Playing Suno track…');
-          await playClip(song.audioUrl || song.streamUrl);
+        if(step.type === 'overview'){
+          updatePodcastStatus('Narrating podcast overview…');
+          const res = await speakText(step.script);
+          const nav = res?.nav || takePodcastNavRequest();
+          if(nav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
+          if(nav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
         }
 
-        const next = selections[i+1];
-        if(next) beginSongPollForSegment(next);
+        if(step.type === 'segment'){
+          podcastQueueIndex = step.index;
+          renderPodcastScripts();
+          const seg = step.seg;
+          updatePodcastStatus(`Talking through ${seg.headline || 'a top story'}…`);
+          const res = await speakText(seg.deepDiveScript || seg.overviewScript || seg.reason || '');
+          const nav = res?.nav || takePodcastNavRequest();
+          if(nav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
+          if(nav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
+
+          const song = await beginSongPollForSegment(seg);
+          if(podcastNavRequest){
+            const dir = takePodcastNavRequest();
+            stepIndex = dir === 'prev' ? Math.max(0, stepIndex - 1) : Math.min(steps.length, stepIndex + 1);
+            continue;
+          }
+
+          if(song && (song.audioUrl || song.streamUrl)){
+            updatePodcastStatus('Playing Suno track…');
+            await playClip(song.audioUrl || song.streamUrl);
+          }
+
+          const pendingNav = takePodcastNavRequest();
+          if(pendingNav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
+          if(pendingNav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
+
+          const next = selections[step.index+1];
+          if(next) beginSongPollForSegment(next);
+        }
+
+        stepIndex += 1;
       }
 
-      podcastQueueIndex = -1; 
+      podcastQueueIndex = -1;
+      currentPodcastStep = -1;
+      podcastNavRequest = null;
       renderPodcastScripts();
       updatePodcastStatus('Podcast finished.');
+      updatePodcastControlButtons();
 
       if(persist && podcastState){
         try{
@@ -1631,6 +1835,7 @@
       }
 
       podcastIsRunning = false;
+      updatePodcastControlButtons();
     }
 
 
@@ -1835,7 +2040,9 @@
           selections: Array.isArray(song.podcastSelections) ? song.podcastSelections : [],
           createdAtIso: song.generatedAtIso || (song.createdAt instanceof Date ? song.createdAt.toISOString() : new Date().toISOString()),
         };
+        currentPodcastStep = 0;
         renderPodcastScripts();
+        updatePodcastControlButtons();
         if(!podcastIsRunning){
           updatePodcastStatus('Playing saved podcast episode…');
           playPodcastQueue({persist:false}).catch(err=>{
@@ -1845,7 +2052,9 @@
         }
       } else {
         podcastState = null;
+        currentPodcastStep = -1;
         renderPodcastScripts();
+        updatePodcastControlButtons();
 
         const rawAudio = sanitizeAudioUrl(song.audioUrl || song.streamUrl || '');
         const playable=getPlayableAudioUrl(rawAudio);
@@ -1915,6 +2124,7 @@
           selections,
           createdAtIso: body.createdAtIso || new Date().toISOString(),
         };
+        currentPodcastStep = 0;
 
         // 🔹 EARLIEST REASONABLE POINT TO SAVE TO FIREBASE
         let episodeRef = null;
@@ -1935,6 +2145,7 @@
         }
 
         renderPodcastScripts();
+        updatePodcastControlButtons();
         updatePodcastStatus('Narrating podcast and generating Suno songs…');
 
         // still pass persist so playPodcastQueue can run finalize step,
@@ -1944,11 +2155,13 @@
             console.warn('Podcast playback failed:', err);
             updatePodcastStatus(err?.message || 'Podcast playback failed.');
             podcastIsRunning = false;
+            updatePodcastControlButtons();
           });
 
       }catch(err){
         updatePodcastStatus(err.message || 'Unable to generate podcast.');
         podcastIsRunning = false;
+        updatePodcastControlButtons();
       }
     }
 
@@ -1959,6 +2172,9 @@
       customTagsInput = $('#customTagsInput');
       generateSongButton = $('#generateSongButton');
       generatePodcastButton = $('#generatePodcastButton');
+      podcastPrevButton = $('#podcastPrevButton');
+      podcastNextButton = $('#podcastNextButton');
+      podcastPlayPauseButton = $('#podcastPlayPauseButton');
       customTagsInput?.addEventListener('keydown', evt=>{
         if(evt.key==='Enter'){
           evt.preventDefault();
@@ -1972,6 +2188,10 @@
       generatePodcastButton?.addEventListener('click', ()=>{
         generatePodcastEpisode();
       });
+
+      podcastPrevButton?.addEventListener('click', ()=> requestPodcastNavigation('prev'));
+      podcastNextButton?.addEventListener('click', ()=> requestPodcastNavigation('next'));
+      podcastPlayPauseButton?.addEventListener('click', togglePodcastPause);
 
       // Desktop sidebar tabs
       document.querySelectorAll('[data-role="desktop-sidebar-tab"]').forEach(btn => {
@@ -2014,6 +2234,7 @@
       showListEmptyState('songList','Loading recent spins…');
       resetNowPlaying();
       updateDockState();
+      updatePodcastControlButtons();
 
       // Headlines
       (async ()=>{
