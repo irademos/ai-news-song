@@ -755,6 +755,7 @@
     let headlinesCache=[], groupedHeadlines=new Map(), headlineViewMode='sources', selectedHeadlineSource=null;
     let currentHeadlineKey=null, selectedStory=null, latestArticleContent='', latestSummary='', isGenerating=false;
     let podcastState=null, podcastIsRunning=false, podcastQueueIndex=-1, podcastNavRequest=null, currentPodcastStep=-1;
+    const sunoHydrationInFlight = new Set();
     let generateSongButton=null, generatePodcastButton=null, genreSelect=null, customTagsInput=null, activeContentTab='article';
     let podcastPrevButton=null, podcastNextButton=null, podcastPlayPauseButton=null;
     let currentNarrationResolver=null, currentClipResolver=null;
@@ -1245,6 +1246,44 @@
       throw new Error('Timed out waiting for Suno audio.');
     }
 
+    async function hydrateSegmentWithSuno(seg, { timeoutMs = 120000, requireFinalAudioHost = false } = {}) {
+      const taskIds = Array.isArray(seg?.songTaskIds) ? seg.songTaskIds.filter(Boolean) : [];
+      const clipIds = Array.isArray(seg?.songClipIds) ? seg.songClipIds.filter(Boolean) : [];
+      const hasAudio = Boolean(seg?.song?.audioUrl || seg?.song?.streamUrl);
+
+      if (!taskIds.length && !clipIds.length) return seg;
+      if (hasAudio) return seg;
+
+      try {
+        const clip = await pollForAudioIds({ taskIds, clipIds }, { timeoutMs, intervalMs: 8000, requireFinalAudioHost });
+        if (!clip) return seg;
+
+        const streamUrl = sanitizeAudioUrl(clip.audio_url || '', { migrateHost: true });
+        const imageUrl = sanitizeImageUrl(clip.image_url || '');
+        const lyrics = (seg?.songLyrics || clip.lyrics || '').trim();
+
+        seg.song = {
+          ...(seg.song || {}),
+          audioUrl: streamUrl,
+          streamUrl,
+          imageUrl,
+          lyrics,
+          title: clip.title || (seg.song || {}).title || '',
+          artist: clip.artist || (seg.song || {}).artist || '',
+          duration: typeof clip.duration === 'number' ? clip.duration : (seg.song || {}).duration,
+          taskIds,
+          clipIds,
+          tags: seg.tags || '',
+        };
+
+        seg.songLyrics = lyrics;
+      } catch (err) {
+        console.warn('Unable to hydrate Suno segment:', err);
+      }
+
+      return seg;
+    }
+
     function populateFromSuno(song){
       const createdAt = song.createdAt instanceof Date ? song.createdAt : new Date();
       const pieces=[]; if(song.sunoTitle) pieces.push(`Suno: ${song.sunoTitle}`); if(song.articleSource) pieces.push(song.articleSource);
@@ -1407,6 +1446,10 @@
 
       const segments = (podcast.selections || []).map(seg=>{
         const song = seg.song || {};
+        const audioUrl = sanitizeAudioUrl(song.audioUrl || song.streamUrl || '');
+        const streamUrl = sanitizeAudioUrl(song.streamUrl || song.audioUrl || '');
+        const imageUrl = sanitizeImageUrl(song.imageUrl || '');
+        const lyrics = (song.lyrics || seg.songLyrics || '').trim();
         return {
           headline: seg.headline || '',
           source: seg.source || '',
@@ -1418,10 +1461,18 @@
           songPrompt: seg.songPrompt || '',
           songTaskIds: Array.isArray(seg.songTaskIds) ? seg.songTaskIds : [],
           songClipIds: Array.isArray(seg.songClipIds) ? seg.songClipIds : [],
+          songLyrics: lyrics,
+          songTitle: song.title || '',
+          songArtist: song.artist || '',
+          songDuration: typeof song.duration === 'number' ? song.duration : null,
           song: {
-            audioUrl: sanitizeAudioUrl(song.audioUrl || ''),
-            streamUrl: sanitizeAudioUrl(song.streamUrl || ''),
-            imageUrl: sanitizeImageUrl(song.imageUrl || ''),
+            audioUrl,
+            streamUrl,
+            imageUrl,
+            lyrics,
+            title: song.title || '',
+            artist: song.artist || '',
+            duration: typeof song.duration === 'number' ? song.duration : null,
             taskIds: Array.isArray(seg.songTaskIds) ? seg.songTaskIds : [],
             clipIds: Array.isArray(seg.songClipIds) ? seg.songClipIds : [],
             tags: seg.tags || '',
@@ -1510,17 +1561,32 @@
         const taskIds = Array.isArray(seg.songTaskIds) ? seg.songTaskIds : [];
         const clipIds = Array.isArray(seg.songClipIds) ? seg.songClipIds : [];
         let finalAudio='', finalImage='';
+        let finalClip=null;
         if(taskIds.length || clipIds.length){
-          const finalClip = await pollForAudioIds({taskIds, clipIds},{timeoutMs:240000, intervalMs:12000, requireFinalAudioHost:true}).catch(()=>null);
+          finalClip = await pollForAudioIds({taskIds, clipIds},{timeoutMs:240000, intervalMs:12000, requireFinalAudioHost:true}).catch(()=>null);
           finalAudio = sanitizeAudioUrl(finalClip?.audio_url || '', {migrateHost:true});
           finalImage = sanitizeImageUrl(finalClip?.image_url || '');
         }
+        const finalLyrics = (seg.song?.lyrics || seg.songLyrics || finalClip?.lyrics || '').trim();
+        const finalTitle = seg.song?.title || finalClip?.title || '';
+        const finalArtist = seg.song?.artist || finalClip?.artist || '';
+        const finalDuration = typeof seg.song?.duration === 'number'
+          ? seg.song.duration
+          : (typeof finalClip?.duration === 'number' ? finalClip.duration : null);
         return {
           ...seg,
+          songLyrics: finalLyrics,
+          songTitle: finalTitle,
+          songArtist: finalArtist,
+          songDuration: finalDuration,
           song: {
             audioUrl: finalAudio || seg.song?.audioUrl || seg.song?.streamUrl || '',
-            streamUrl: seg.song?.streamUrl || '',
+            streamUrl: seg.song?.streamUrl || finalAudio || '',
             imageUrl: finalImage || seg.song?.imageUrl || '',
+            lyrics: finalLyrics,
+            title: finalTitle,
+            artist: finalArtist,
+            duration: finalDuration,
             taskIds,
             clipIds,
             tags: seg.tags || '',
@@ -1640,6 +1706,7 @@
       const primaryTaskId = typeof d.primaryTaskId==='string' ? d.primaryTaskId.trim() : storedTaskIds[0] || '';
 
       return {
+        docRef: doc.ref,
         id: doc.id,
         title: d.title || d.sunoTitle || 'Daily Spin (Suno)',
         sunoTitle: d.sunoTitle || d.title || 'Daily Spin (Suno)',
@@ -1666,6 +1733,44 @@
       };
     }
 
+    async function maybeHydrateSpinFromTaskId(spin){
+      const primaryTaskId = typeof spin?.primaryTaskId === 'string' ? spin.primaryTaskId.trim() : '';
+      const needsAudio = !sanitizeAudioUrl(spin?.audioUrl || spin?.streamUrl || '');
+      const needsImage = !sanitizeImageUrl(spin?.imageUrl || '');
+      const needsLyrics = !(spin?.lyrics || spin?.prompt || spin?.podcastOverview);
+      if(!spin?.docRef || !primaryTaskId) return;
+      if(!needsAudio && !needsImage && !needsLyrics) return;
+
+      const key = `${spin.kind || 'song'}:${primaryTaskId}`;
+      if(sunoHydrationInFlight.has(key)) return;
+      sunoHydrationInFlight.add(key);
+
+      try{
+        const r = await fetch(`/api/song-status?task_ids=${encodeURIComponent(primaryTaskId)}`);
+        if(!r.ok) return;
+        const payload = await r.json().catch(()=>({}));
+        const row = Array.isArray(payload?.data) ? payload.data.find(entry=>entry && entry.audio_url) : null;
+        if(!row) return;
+
+        const update = {};
+        const audioUrl = sanitizeAudioUrl(row.audio_url || '', {migrateHost:true});
+        const imageUrl = sanitizeImageUrl(row.image_url || '');
+        const lyrics = (row.lyrics || '').trim();
+
+        if(audioUrl){ update.audioUrl = audioUrl; update.streamUrl = audioUrl; }
+        if(imageUrl) update.imageUrl = imageUrl;
+        if(lyrics) update.lyrics = lyrics;
+
+        if(Object.keys(update).length){
+          await updateDoc(spin.docRef, update);
+        }
+      }catch(err){
+        console.warn('Passive Suno hydration failed:', err);
+      }finally{
+        sunoHydrationInFlight.delete(key);
+      }
+    }
+
     function mapPodcastDocument(doc){
       const d = doc.data();
       const createdAt = coerceDate(d.createdAt, d.generatedAtIso);
@@ -1677,6 +1782,7 @@
       const overview = d.overviewScript || '';
 
       return {
+        docRef: doc.ref,
         id: doc.id,
         title: 'Daily Spin Podcast',
         sunoTitle: 'Daily Spin Podcast',
@@ -1874,9 +1980,9 @@
       };
 
       unsubscribeSongs = onSnapshot(songsQuery, (snap)=>{
-        spinsCache = snap.docs
-          .map(mapSpinDocument)
-          .filter(s=>Boolean(s.audioUrl));
+        spinsCache = snap.docs.map(mapSpinDocument);
+        spinsCache.forEach(maybeHydrateSpinFromTaskId);
+        spinsCache = spinsCache.filter(s=>Boolean(s.audioUrl));
         refreshList();
       }, (err)=>{
         console.error('Firebase load error:',err);
@@ -1885,6 +1991,7 @@
 
       unsubscribePodcasts = onSnapshot(podcastsQuery, (snap)=>{
         podcastsCache = snap.docs.map(mapPodcastDocument);
+        podcastsCache.forEach(maybeHydrateSpinFromTaskId);
         refreshList();
       }, (err)=>{
         console.error('Firebase podcast load error:',err);
@@ -2136,6 +2243,17 @@
         };
         currentPodcastStep = 0;
 
+        setCurrentSong({
+          id: 'podcast-live-preview',
+          kind: 'podcast',
+          articleHeadline: 'Daily Spin Podcast',
+          articleSource: 'Podcast',
+          podcastOverview: podcastState.overviewScript,
+          podcastSelections: podcastState.selections,
+          generatedAtIso: podcastState.createdAtIso,
+          createdAt: new Date(podcastState.createdAtIso),
+        });
+
         // 🔹 Pre-save to Firebase as you already do
         let episodeRef = null;
         let spinRef = null;
@@ -2167,14 +2285,34 @@
             const fullBody = await rFull.json().catch(() => ({}));
             if (!rFull.ok) throw new Error(fullBody?.error || 'Unable to finish podcast generation.');
 
-            const fullSelections = Array.isArray(fullBody?.selections)
+            let fullSelections = Array.isArray(fullBody?.selections)
               ? fullBody.selections
               : [];
+
+            if(fullSelections.length){
+              fullSelections = await Promise.all(fullSelections.map(seg => hydrateSegmentWithSuno(seg, { timeoutMs: 90000 })));
+            }
 
             // Replace selections in-place so playPodcastQueue sees richer data
             if (podcastState) {
               podcastState.selections = fullSelections;
               renderPodcastScripts();
+
+              if(podcastState.episodeRef){
+                updateDoc(podcastState.episodeRef, { selections: fullSelections }).catch(()=>{});
+              }
+              if(podcastState.spinRef){
+                const primary = pickPrimaryPodcastSong(fullSelections);
+                const updatePayload = { podcastSelections: fullSelections };
+                if(primary.audioUrl || primary.streamUrl){
+                  updatePayload.audioUrl = primary.audioUrl || primary.streamUrl || '';
+                  updatePayload.streamUrl = primary.streamUrl || primary.audioUrl || '';
+                  updatePayload.imageUrl = primary.imageUrl || '';
+                  updatePayload.taskIds = Array.isArray(primary.taskIds) ? primary.taskIds : [];
+                  updatePayload.primaryTaskId = (primary.taskIds || [])[0] || '';
+                }
+                updateDoc(podcastState.spinRef, updatePayload).catch(()=>{});
+              }
             }
           } catch (err) {
             console.warn('Background podcast enrichment failed:', err);
