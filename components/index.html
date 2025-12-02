@@ -1861,8 +1861,16 @@
 
         songsCache = merged;
         renderSongList(merged);
+
         const selected = currentSongId ? merged.find(s=>s.id===currentSongId) : null;
-        setCurrentSong(selected || merged[0]);
+
+        // When a podcast is mid-generation/playback, avoid auto-switching to a new
+        // item (which could hijack the player and clear the podcast scripts).
+        if(selected){
+          setCurrentSong(selected);
+        } else if(!podcastIsRunning && merged[0]){
+          setCurrentSong(merged[0]);
+        }
       };
 
       unsubscribeSongs = onSnapshot(songsQuery, (snap)=>{
