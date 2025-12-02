@@ -1837,7 +1837,7 @@
 
     async function playPodcastQueue({persist=true}={}) {
       if(!podcastState) return;
-      podcastIsRunning = true;
+      // podcastIsRunning = true;
       podcastQueueIndex = -1;
       podcastNavRequest = null;
 
@@ -1943,7 +1943,7 @@
         console.warn('Podcast queue failed:', err);
         updatePodcastStatus('Podcast playback failed.');
       } finally {
-        podcastIsRunning = false;
+        // podcastIsRunning = false;
         updatePodcastControlButtons();
       }
     }
@@ -2214,7 +2214,7 @@
 
     async function generatePodcastEpisode({ persist = true } = {}) {
       if (podcastIsRunning) {
-        updatePodcastStatus('A podcast is already running.');
+        updatePodcastStatus('A podcast is already generating.');
         return;
       }
       if (!headlinesCache.length) {

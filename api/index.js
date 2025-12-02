@@ -11,12 +11,12 @@ const SUNO_PROMPT_MAX_CHARS = 3000;
 const OPEN_ROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const LYRIC_MODELS = [
   // Order matters: try fastest/cheapest first, then stronger fallbacks.
-  'deepseek/deepseek-chat-v3.1:free',
-  'meta-llama/llama-3.1-8b-instruct:free',
   'openai/gpt-4o-mini',
   'anthropic/claude-3.5-sonnet',
   'google/gemini-1.5-flash',
   'meta/llama-3.1-8b-instruct',
+  'deepseek/deepseek-chat-v3.1:free',
+  'meta-llama/llama-3.1-8b-instruct:free',
 ];
 
 const PODCAST_PLANNER_MODEL = 'openai/gpt-4o-mini';
