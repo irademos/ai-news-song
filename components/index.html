@@ -1841,107 +1841,111 @@
       podcastQueueIndex = -1;
       podcastNavRequest = null;
 
-      const selections = Array.isArray(podcastState.selections) ? podcastState.selections : [];
-      const steps = [];
+      try {
+        const selections = Array.isArray(podcastState.selections) ? podcastState.selections : [];
+        const steps = [];
 
-      if(podcastState.overviewScript){
-        steps.push({ type: 'overview', script: podcastState.overviewScript });
-      }
-      selections.forEach((seg, idx)=> steps.push({ type: 'segment', seg, index: idx }));
+        if(podcastState.overviewScript){
+          steps.push({ type: 'overview', script: podcastState.overviewScript });
+        }
+        selections.forEach((seg, idx)=> steps.push({ type: 'segment', seg, index: idx }));
 
-      if(selections[0]) beginSongPollForSegment(selections[0]);
+        if(selections[0]) beginSongPollForSegment(selections[0]);
 
-      let stepIndex = Math.max(0, currentPodcastStep >=0 ? currentPodcastStep : 0);
-      if(stepIndex >= steps.length) stepIndex = 0;
+        let stepIndex = Math.max(0, currentPodcastStep >=0 ? currentPodcastStep : 0);
+        if(stepIndex >= steps.length) stepIndex = 0;
 
-      updatePodcastStatus('Starting podcast narration…');
-      renderPodcastScripts();
-      updatePodcastControlButtons();
-
-      while(stepIndex < steps.length){
-        const step = steps[stepIndex];
-        currentPodcastStep = stepIndex;
+        updatePodcastStatus('Starting podcast narration…');
+        renderPodcastScripts();
         updatePodcastControlButtons();
 
-        if(step.type === 'overview'){
-          updatePodcastStatus('Narrating podcast overview…');
-          const res = await speakText(step.script);
-          const nav = res?.nav || takePodcastNavRequest();
-          if(nav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
-          if(nav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
-        }
+        while(stepIndex < steps.length){
+          const step = steps[stepIndex];
+          currentPodcastStep = stepIndex;
+          updatePodcastControlButtons();
 
-        if(step.type === 'segment'){
-          podcastQueueIndex = step.index;
-          renderPodcastScripts();
-          const seg = step.seg;
-          updatePodcastStatus(`Talking through ${seg.headline || 'a top story'}…`);
-          const res = await speakText(seg.deepDiveScript || seg.overviewScript || seg.reason || '');
-          const nav = res?.nav || takePodcastNavRequest();
-          if(nav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
-          if(nav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
-
-          const song = await beginSongPollForSegment(seg);
-          if(podcastNavRequest){
-            const dir = takePodcastNavRequest();
-            stepIndex = dir === 'prev' ? Math.max(0, stepIndex - 1) : Math.min(steps.length, stepIndex + 1);
-            continue;
+          if(step.type === 'overview'){
+            updatePodcastStatus('Narrating podcast overview…');
+            const res = await speakText(step.script);
+            const nav = res?.nav || takePodcastNavRequest();
+            if(nav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
+            if(nav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
           }
 
-          if(song && (song.audioUrl || song.streamUrl)){
-            updatePodcastStatus('Playing Suno track…');
-            await playClip(song.audioUrl || song.streamUrl);
+          if(step.type === 'segment'){
+            podcastQueueIndex = step.index;
+            renderPodcastScripts();
+            const seg = step.seg;
+            updatePodcastStatus(`Talking through ${seg.headline || 'a top story'}…`);
+            const res = await speakText(seg.deepDiveScript || seg.overviewScript || seg.reason || '');
+            const nav = res?.nav || takePodcastNavRequest();
+            if(nav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
+            if(nav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
+
+            const song = await beginSongPollForSegment(seg);
+            if(podcastNavRequest){
+              const dir = takePodcastNavRequest();
+              stepIndex = dir === 'prev' ? Math.max(0, stepIndex - 1) : Math.min(steps.length, stepIndex + 1);
+              continue;
+            }
+
+            if(song && (song.audioUrl || song.streamUrl)){
+              updatePodcastStatus('Playing Suno track…');
+              await playClip(song.audioUrl || song.streamUrl);
+            }
+
+            const pendingNav = takePodcastNavRequest();
+            if(pendingNav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
+            if(pendingNav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
+
+            const next = selections[step.index+1];
+            if(next) beginSongPollForSegment(next);
           }
 
-          const pendingNav = takePodcastNavRequest();
-          if(pendingNav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
-          if(pendingNav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
-
-          const next = selections[step.index+1];
-          if(next) beginSongPollForSegment(next);
+          stepIndex += 1;
         }
 
-        stepIndex += 1;
+        podcastQueueIndex = -1;
+        currentPodcastStep = -1;
+        podcastNavRequest = null;
+        renderPodcastScripts();
+        updatePodcastStatus('Podcast finished.');
+
+        if(persist && podcastState){
+          try{
+            await initFirebase();
+
+            // Reuse pre-saved refs if present, otherwise create them
+            let episodeRef = podcastState.episodeRef;
+            let spinRef = podcastState.spinRef;
+
+            if(!episodeRef){
+              episodeRef = await savePodcastEpisode(podcastState);
+              podcastState.episodeRef = episodeRef;
+            }
+
+            if(!spinRef){
+              spinRef = await savePodcastSpin({ podcast: podcastState, episodeRef });
+              podcastState.spinRef = spinRef;
+            }
+
+            finalizePodcastEpisode({ docRef: episodeRef, selections: podcastState.selections })
+              .then(resolved => finalizePodcastSpin({
+                docRef: spinRef,
+                selections: resolved || podcastState.selections
+              }))
+              .catch(e => console.warn('Finalize podcast episode failed:', e));
+          }catch(err){
+            console.warn('Failed to save podcast episode:', err);
+          }
+        }
+      } catch (err) {
+        console.warn('Podcast queue failed:', err);
+        updatePodcastStatus('Podcast playback failed.');
+      } finally {
+        podcastIsRunning = false;
+        updatePodcastControlButtons();
       }
-
-      podcastQueueIndex = -1;
-      currentPodcastStep = -1;
-      podcastNavRequest = null;
-      renderPodcastScripts();
-      updatePodcastStatus('Podcast finished.');
-      updatePodcastControlButtons();
-
-      if(persist && podcastState){
-        try{
-          await initFirebase();
-
-          // Reuse pre-saved refs if present, otherwise create them
-          let episodeRef = podcastState.episodeRef;
-          let spinRef = podcastState.spinRef;
-
-          if(!episodeRef){
-            episodeRef = await savePodcastEpisode(podcastState);
-            podcastState.episodeRef = episodeRef;
-          }
-
-          if(!spinRef){
-            spinRef = await savePodcastSpin({ podcast: podcastState, episodeRef });
-            podcastState.spinRef = spinRef;
-          }
-
-          finalizePodcastEpisode({ docRef: episodeRef, selections: podcastState.selections })
-            .then(resolved => finalizePodcastSpin({
-              docRef: spinRef,
-              selections: resolved || podcastState.selections
-            }))
-            .catch(e => console.warn('Finalize podcast episode failed:', e));
-        }catch(err){
-          console.warn('Failed to save podcast episode:', err);
-        }
-      }
-
-      podcastIsRunning = false;
-      updatePodcastControlButtons();
     }
 
 
