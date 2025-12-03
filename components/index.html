@@ -754,7 +754,7 @@
     let songsCache=[], spinsCache=[], podcastsCache=[], currentSongId=null, unsubscribeSongs=null, unsubscribePodcasts=null;
     let headlinesCache=[], groupedHeadlines=new Map(), headlineViewMode='sources', selectedHeadlineSource=null;
     let currentHeadlineKey=null, selectedStory=null, latestArticleContent='', latestSummary='', isGenerating=false;
-    let podcastState=null, podcastIsRunning=false, podcastQueueIndex=-1, podcastNavRequest=null, currentPodcastStep=-1;
+    let podcastState=null, podcastIsGenerating=false, podcastIsPlaying=false, podcastQueueIndex=-1, podcastNavRequest=null, currentPodcastStep=-1;
     const sunoHydrationInFlight = new Set();
     let generateSongButton=null, generatePodcastButton=null, genreSelect=null, customTagsInput=null, activeContentTab='article';
     let podcastPrevButton=null, podcastNextButton=null, podcastPlayPauseButton=null;
@@ -884,12 +884,12 @@
       const atFirst = currentPodcastStep <= 0;
       const atLast = currentPodcastStep >= total - 1;
 
-      if(podcastPrevButton) podcastPrevButton.disabled = !hasPodcast || !podcastIsRunning || atFirst;
-      if(podcastNextButton) podcastNextButton.disabled = !hasPodcast || !podcastIsRunning || atLast;
+      if(podcastPrevButton) podcastPrevButton.disabled = !hasPodcast || !podcastIsPlaying || atFirst;
+      if(podcastNextButton) podcastNextButton.disabled = !hasPodcast || !podcastIsPlaying || atLast;
     }
 
     function requestPodcastNavigation(direction){
-      if(!podcastIsRunning || !podcastState) return;
+      if(!podcastIsPlaying || !podcastState) return;
       podcastNavRequest = direction;
 
       if(currentNarrationResolver){
@@ -1837,7 +1837,7 @@
 
     async function playPodcastQueue({persist=true}={}) {
       if(!podcastState) return;
-      // podcastIsRunning = true;
+      podcastIsPlaying = true;
       podcastQueueIndex = -1;
       podcastNavRequest = null;
 
@@ -1943,7 +1943,7 @@
         console.warn('Podcast queue failed:', err);
         updatePodcastStatus('Podcast playback failed.');
       } finally {
-        // podcastIsRunning = false;
+        podcastIsPlaying = false;
         updatePodcastControlButtons();
       }
     }
@@ -1974,11 +1974,11 @@
 
         const selected = currentSongId ? merged.find(s=>s.id===currentSongId) : null;
 
-        // When a podcast is mid-generation/playback, avoid auto-switching to a new
+        // When a podcast is mid-playback, avoid auto-switching to a new
         // item (which could hijack the player and clear the podcast scripts).
         if(selected){
           setCurrentSong(selected);
-        } else if(!podcastIsRunning && merged[0]){
+        } else if(!podcastIsPlaying && merged[0]){
           setCurrentSong(merged[0]);
         }
       };
@@ -2162,7 +2162,7 @@
         currentPodcastStep = 0;
         renderPodcastScripts();
         updatePodcastControlButtons();
-        if(!podcastIsRunning){
+        if(!podcastIsGenerating){
           updatePodcastStatus('Playing saved podcast episode…');
           playPodcastQueue({persist:false}).catch(err=>{
             console.warn('Podcast playback from archive failed:', err);
@@ -2213,7 +2213,7 @@
     }
 
     async function generatePodcastEpisode({ persist = true } = {}) {
-      if (podcastIsRunning) {
+      if (podcastIsGenerating) {
         updatePodcastStatus('A podcast is already generating.');
         return;
       }
@@ -2222,7 +2222,7 @@
         return;
       }
 
-      podcastIsRunning = true;
+      podcastIsGenerating = true;
       podcastQueueIndex = -1;
       updatePodcastStatus('Asking OpenRouter for a podcast script…');
       renderPodcastScripts();
@@ -2320,6 +2320,9 @@
             }
           } catch (err) {
             console.warn('Background podcast enrichment failed:', err);
+          } finally {
+            podcastIsGenerating = false;
+            updatePodcastControlButtons();
           }
         })();
 
@@ -2327,12 +2330,12 @@
         playPodcastQueue({ persist }).catch((err) => {
           console.warn('Podcast playback failed:', err);
           updatePodcastStatus(err?.message || 'Podcast playback failed.');
-          podcastIsRunning = false;
+          podcastIsGenerating = false;
           updatePodcastControlButtons();
         });
       } catch (err) {
         updatePodcastStatus(err.message || 'Unable to generate podcast.');
-        podcastIsRunning = false;
+        podcastIsGenerating = false;
         updatePodcastControlButtons();
       }
     }
