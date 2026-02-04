@@ -763,6 +763,12 @@
     /* ---------- DOM Helpers ---------- */
     const $ = sel => document.querySelector(sel);
     const $$ = sel => document.querySelectorAll(sel);
+    const decodeHtmlEntities = value => {
+      if (typeof value !== 'string') return '';
+      const textarea = document.createElement('textarea');
+      textarea.innerHTML = value;
+      return textarea.value;
+    };
 
     const audio = document.getElementById('audioPlayer');
     if (audio){
@@ -920,6 +926,31 @@
     /* ---------- Podcast helpers ---------- */
     let currentAudio = null;
 
+    function speakTextWithBrowser(text, settle) {
+      if (!('speechSynthesis' in window)) {
+        settle({});
+        return;
+      }
+
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.onend = () => settle({});
+        utterance.onerror = () => settle({});
+
+        currentNarrationResolver = (payload={}) => {
+          try { window.speechSynthesis.cancel(); } catch {}
+          settle(payload);
+        };
+
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        settle({});
+      }
+    }
+
     async function speakText(text) {
       return new Promise(async (resolve) => {
         if (!text) { resolve({}); return; }
@@ -954,6 +985,11 @@
 
           const src = audio?.src || '';
           const useDockedPlayer = !!(audioEl && src);
+
+          if (!src) {
+            speakTextWithBrowser(text, settle);
+            return;
+          }
 
           if (useDockedPlayer) {
             const onEnd = () => settle({});
@@ -1001,7 +1037,7 @@
           }
         } catch (err) {
           console.error("Puter/OpenAI TTS error:", err);
-          settle({});
+          speakTextWithBrowser(text, settle);
         }
       });
     }
@@ -1015,16 +1051,21 @@
         list.innerHTML='';
         return;
       }
-      overviewEl.textContent = podcastState.overviewScript || '';
+      overviewEl.textContent = decodeHtmlEntities(podcastState.overviewScript || '');
       list.innerHTML='';
       (podcastState.selections||[]).forEach((seg,idx)=>{
         const li=document.createElement('li');
         li.classList.toggle('active', idx===podcastQueueIndex);
         const title=document.createElement('div');
-        title.innerHTML = `<strong>${seg.headline||'Article'}</strong>${seg.source?` — ${seg.source}`:''}`;
+        const headlineText = decodeHtmlEntities(seg.headline || 'Article');
+        const sourceText = decodeHtmlEntities(seg.source || '');
+        const strong=document.createElement('strong');
+        strong.textContent = headlineText;
+        title.appendChild(strong);
+        if (sourceText) title.append(` — ${sourceText}`);
         const script=document.createElement('div');
         script.className='podcast-script';
-        script.textContent = seg.deepDiveScript || seg.overviewScript || '';
+        script.textContent = decodeHtmlEntities(seg.deepDiveScript || seg.overviewScript || '');
         li.appendChild(title);
         li.appendChild(script);
         list.appendChild(li);
@@ -1076,7 +1117,7 @@
       entries.forEach(([source,stories])=>{
         const node = tpl.content.cloneNode(true);
         const btn = node.querySelector('button');
-        node.querySelector('.song-title').textContent = source;
+        node.querySelector('.song-title').textContent = decodeHtmlEntities(source);
         node.querySelector('.song-meta').textContent = `${stories.length} headline${stories.length===1?'':'s'}`;
         btn.classList.toggle('active', source===selectedHeadlineSource);
         btn.addEventListener('click', ()=> showHeadlinesForSource(source));
@@ -1109,11 +1150,13 @@
         const meta=node.querySelector('.song-meta');
 
         const key = story.link || `${story.source || 'source'}:${story.headline}`;
-        const preview=(story.summary||'').trim();
+        const preview=decodeHtmlEntities((story.summary||'').trim());
         const truncated = preview.length>140 ? `${preview.slice(0,140).trimEnd()}…` : preview;
+        const displayHeadline = decodeHtmlEntities(story.headline || 'Untitled story');
+        const displaySource = decodeHtmlEntities(story.source || '');
 
-        title.textContent = story.headline || 'Untitled story';
-        meta.textContent = [story.source, truncated].filter(Boolean).join(' • ');
+        title.textContent = displayHeadline || 'Untitled story';
+        meta.textContent = [displaySource, truncated].filter(Boolean).join(' • ');
         btn.dataset.id = key;
         btn.classList.toggle('active', key===currentHeadlineKey);
         btn.addEventListener('click', ()=> handleHeadlineSelection({ ...story, key }));
@@ -1196,9 +1239,9 @@
       selectedStory=story; latestArticleContent=''; latestSummary='';
       refreshHeadlineView();
 
-      $('#songTitle').textContent = story.headline || 'Selected headline';
-      $('#songMeta').textContent = story.source || 'Breaking news';
-      $('#songArticle').textContent = story.summary || 'Fetching the full article…';
+      $('#songTitle').textContent = decodeHtmlEntities(story.headline || 'Selected headline');
+      $('#songMeta').textContent = decodeHtmlEntities(story.source || 'Breaking news');
+      $('#songArticle').textContent = decodeHtmlEntities(story.summary || 'Fetching the full article…');
       $('#songLyrics').textContent = 'Lyrics will appear once a Suno track has been generated.';
 
       const tag=$('#songTag'); tag.textContent='Article'; tag.style.background='rgba(245,158,11,.18)'; tag.style.color='var(--accent)';
@@ -1286,17 +1329,17 @@
 
     function populateFromSuno(song){
       const createdAt = song.createdAt instanceof Date ? song.createdAt : new Date();
-      const pieces=[]; if(song.sunoTitle) pieces.push(`Suno: ${song.sunoTitle}`); if(song.articleSource) pieces.push(song.articleSource);
-      if(song.tags) pieces.push(`Tags: ${song.tags}`);
+      const pieces=[]; if(song.sunoTitle) pieces.push(`Suno: ${decodeHtmlEntities(song.sunoTitle)}`); if(song.articleSource) pieces.push(decodeHtmlEntities(song.articleSource));
+      if(song.tags) pieces.push(`Tags: ${decodeHtmlEntities(song.tags)}`);
       const ts=formatDateTime(createdAt); if(ts) pieces.push(ts);
 
-      $('#songTitle').textContent = song.articleHeadline || song.sunoTitle || 'Daily Spin (Suno)';
+      $('#songTitle').textContent = decodeHtmlEntities(song.articleHeadline || song.sunoTitle || 'Daily Spin (Suno)');
       $('#songMeta').textContent = pieces.join(' — ') || 'Generated';
 
-      const articleParts=[]; if(song.articleHeadline) articleParts.push(song.articleHeadline);
-      if(song.articleContent) articleParts.push(song.articleContent); else if(song.articleSummary) articleParts.push(song.articleSummary);
+      const articleParts=[]; if(song.articleHeadline) articleParts.push(decodeHtmlEntities(song.articleHeadline));
+      if(song.articleContent) articleParts.push(decodeHtmlEntities(song.articleContent)); else if(song.articleSummary) articleParts.push(decodeHtmlEntities(song.articleSummary));
       $('#songArticle').textContent = articleParts.join('\n\n') || 'Your Suno track is ready. Enjoy!';
-      $('#songLyrics').textContent = (song.lyrics || song.prompt || '').trim() || 'Lyrics were not provided for this spin.';
+      $('#songLyrics').textContent = decodeHtmlEntities((song.lyrics || song.prompt || '').trim()) || 'Lyrics were not provided for this spin.';
 
       const src = getPlayableAudioUrl(song.audioUrl || song.streamUrl || '');
       $('#audioSource').src = src; $('#audioPlayer').load(); if(src){ $('#audioPlayer').play().catch(()=>{}) }

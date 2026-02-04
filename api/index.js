@@ -448,15 +448,28 @@ async function planPodcastWithOpenRouter(stories) {
     { role: 'user', content: user },
   ];
 
+  let raw = '';
+  let lastError;
   for (const model of LYRIC_MODELS) {
     console.log("trying model:", model);
     try {
       raw = await callOpenRouterWithRetries({ model, messages, attempts: 1 });
       break;
     } catch (e) {
-      // errors.push(`[${model}] ${e.message}`);
+      lastError = e;
+      if (e?.status && [401, 403].includes(e.status)) {
+        const authError = new Error('OpenRouter authentication failed.');
+        authError.status = e.status;
+        throw authError;
+      }
       continue;
     }
+  }
+
+  if (!raw) {
+    const failure = new Error('OpenRouter request failed for all models.');
+    if (lastError?.status) failure.status = lastError.status;
+    throw failure;
   }
   const parsed = extractJsonFromString(raw);
 
@@ -830,6 +843,18 @@ app.post('/api/generate-podcast', async (req, res) => {
     });
   } catch (error) {
     console.error('Podcast generation failed:', error);
+    if (error?.status && [401, 403].includes(error.status)) {
+      return res.status(error.status).json({
+        error: 'OpenRouter authentication failed.',
+        details: error.message,
+      });
+    }
+    if (error?.status) {
+      return res.status(error.status).json({
+        error: 'Unable to generate podcast.',
+        details: error.message,
+      });
+    }
     res
       .status(502)
       .json({ error: 'Unable to generate podcast.', details: error.message });
@@ -899,10 +924,37 @@ app.get('/api/song-status', async (req, res) => {
         });
         const raw = await r.text();
         let j; try { j = JSON.parse(raw); } catch { j = raw; }
-        if (!r.ok) throw new Error(typeof j === 'object' ? JSON.stringify(j) : String(j));
-        return Array.isArray(j?.data) ? j.data : [];
+
+        if (r.ok) {
+          return { id, ok: true, data: Array.isArray(j?.data) ? j.data : [] };
+        }
+
+        const details = typeof j === 'object' ? j : String(j);
+        if ([401, 403].includes(r.status)) {
+          return { id, ok: false, authError: true, status: r.status, details };
+        }
+
+        if ([400, 404, 422].includes(r.status)) {
+          return { id, ok: false, pending: true, status: r.status, details };
+        }
+
+        return { id, ok: false, status: r.status, details };
       }));
-      rows = results.flat();
+
+      const authFailure = results.find((r) => r.authError);
+      if (authFailure) {
+        return res.status(authFailure.status).json({
+          error: 'Suno authentication failed.',
+          details: authFailure.details,
+        });
+      }
+
+      const completedRows = results.flatMap((r) => (r.ok ? r.data : []));
+      const pendingRows = results
+        .filter((r) => !r.ok && r.pending)
+        .map((r) => ({ task_id: r.id, state: 'pending' }));
+
+      rows = [...completedRows, ...pendingRows];
     } else {
       // Fallback: list recent tasks, then filter by clip_ids
       const r = await fetch('https://api.sunoapi.com/api/v1/suno/task/', {
@@ -918,6 +970,7 @@ app.get('/api/song-status', async (req, res) => {
     return res.json({
       code: 200,
       data: rows.map(r => ({
+        task_id: r.task_id,
         clip_id: r.clip_id,
         state: r.state,
         title: r.title,
