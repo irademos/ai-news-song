@@ -987,6 +987,7 @@
           const useDockedPlayer = !!(audioEl && src);
 
           if (!src) {
+            try { audioEl?.pause(); } catch {}
             speakTextWithBrowser(text, settle);
             return;
           }
@@ -1037,6 +1038,7 @@
           }
         } catch (err) {
           console.error("Puter/OpenAI TTS error:", err);
+          try { audioEl?.pause(); } catch {}
           speakTextWithBrowser(text, settle);
         }
       });
@@ -2022,7 +2024,7 @@
         if(selected){
           setCurrentSong(selected);
         } else if(!podcastIsPlaying && merged[0]){
-          setCurrentSong(merged[0]);
+          setCurrentSong(merged[0], { autoPlay: false });
         }
       };
 
@@ -2160,7 +2162,7 @@
       }
     }
 
-    function setCurrentSong(song){
+    function setCurrentSong(song, { autoPlay = true } = {}){
       if(!song){ resetNowPlaying(); podcastState=null; renderPodcastScripts(); return }
       currentSongId = song.id || null;
 
@@ -2205,7 +2207,7 @@
         currentPodcastStep = 0;
         renderPodcastScripts();
         updatePodcastControlButtons();
-        if(!podcastIsGenerating){
+        if(!podcastIsGenerating && autoPlay){
           updatePodcastStatus('Playing saved podcast episode…');
           playPodcastQueue({persist:false}).catch(err=>{
             console.warn('Podcast playback from archive failed:', err);
@@ -2223,8 +2225,8 @@
         const currentSrc = $('#audioSource').getAttribute('src') || '';
         if(playable !== currentSrc){
           $('#audioSource').src = playable; $('#audioPlayer').load();
-          if(playable) $('#audioPlayer').play().catch(()=>{});
-        }else if(playable){ $('#audioPlayer').play().catch(()=>{}) }
+          if(playable && autoPlay) $('#audioPlayer').play().catch(()=>{});
+        }else if(playable && autoPlay){ $('#audioPlayer').play().catch(()=>{}) }
 
         if(hasAudioPipeHost(rawAudio)){
           resolveSongAudioUrl(song).then(finalRaw=>{
@@ -2235,7 +2237,7 @@
             if(finalPlayable && finalPlayable!==current){
               $('#audioSource').src = finalPlayable;
               $('#audioPlayer').load();
-              $('#audioPlayer').play().catch(()=>{});
+              if(autoPlay) $('#audioPlayer').play().catch(()=>{});
             }
           }).catch(err=>console.warn('Audio migration failed:', err));
         }
