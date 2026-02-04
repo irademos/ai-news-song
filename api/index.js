@@ -420,6 +420,52 @@ function scoreSimilarity(a, b) {
   return overlap / maxLen;  // 0–1
 }
 
+function buildFallbackHostScript(story, index) {
+  const headline = (story?.headline || `Story ${index + 1}`).trim();
+  const summary = typeof story?.summary === 'string' ? story.summary.trim() : '';
+  const reason = typeof story?.reason === 'string' ? story.reason.trim() : '';
+  const source = typeof story?.source === 'string' ? story.source.trim() : '';
+
+  const summarySentence = summary
+    ? `Here’s the quick update: ${summary}`
+    : `Here’s what we know so far about ${headline}.`;
+  const reasonSentence = reason
+    ? `Why it matters: ${reason}`
+    : 'Why it matters: this is a developing story worth keeping an eye on.';
+  const sourceSentence = source ? `Reporting from ${source}.` : '';
+
+  return [
+    `Up next, ${headline}.`,
+    summarySentence,
+    reasonSentence,
+    sourceSentence,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function buildFallbackPodcastPlan(stories) {
+  const sanitized = Array.isArray(stories) ? stories.filter((story) => story?.headline) : [];
+  const picks = sanitized.slice(0, 3);
+
+  const headlineList = picks.map((story) => story.headline).filter(Boolean);
+  const overviewScript = headlineList.length
+    ? [
+        `Today’s top stories include ${headlineList.slice(0, 2).join(' and ')}${headlineList[2] ? `, plus ${headlineList[2]}` : ''}.`,
+        'We’ll walk through each headline with the key facts and why it matters.',
+      ].join(' ')
+    : 'Today’s top stories are on deck, and we’ll break down the key facts and why they matter.';
+
+  const selections = picks.map((story, index) => ({
+    headline: story.headline,
+    source: story.source || '',
+    reason: story.reason || story.summary || '',
+    host_script: buildFallbackHostScript(story, index),
+  }));
+
+  return { overviewScript, selections };
+}
+
 async function planPodcastWithOpenRouter(stories) {
   if (!stories?.length) throw new Error('At least one story is required to plan a podcast.');
   console.log("getting podcast plan");
@@ -467,14 +513,19 @@ async function planPodcastWithOpenRouter(stories) {
   }
 
   if (!raw) {
-    const failure = new Error('OpenRouter request failed for all models.');
-    if (lastError?.status) failure.status = lastError.status;
-    throw failure;
+    if (lastError?.status && [401, 403].includes(lastError.status)) {
+      const failure = new Error('OpenRouter authentication failed.');
+      failure.status = lastError.status;
+      throw failure;
+    }
+    console.warn('OpenRouter request failed for all models, using fallback plan.');
+    return buildFallbackPodcastPlan(stories);
   }
   const parsed = extractJsonFromString(raw);
 
   if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Podcast planner did not return JSON.');
+    console.warn('Podcast planner did not return JSON, using fallback plan.');
+    return buildFallbackPodcastPlan(stories);
   }
 
   const overviewScript = typeof parsed.overview_script === 'string'
@@ -526,7 +577,8 @@ async function planPodcastWithOpenRouter(stories) {
 
 
   if (!overviewScript || filtered.length !== 3) {
-    throw new Error('Podcast planner returned an incomplete plan.');
+    console.warn('Podcast planner returned an incomplete plan, using fallback plan.');
+    return buildFallbackPodcastPlan(stories);
   }
 
   return { overviewScript, selections: filtered };
@@ -783,9 +835,15 @@ app.post('/api/generate-podcast', async (req, res) => {
         console.warn('Unable to fetch article for podcast deep dive:', error.message);
       }
 
-      const deepScript = articleText
-        ? await writeDeepDiveScript({ headline: story.headline, source: story.source, articleText })
-        : story.host_script;
+      let deepScript = story.host_script || '';
+      if (articleText) {
+        try {
+          deepScript = await writeDeepDiveScript({ headline: story.headline, source: story.source, articleText });
+        } catch (error) {
+          console.warn('Unable to write deep dive script:', error.message);
+          deepScript = story.host_script || buildFallbackHostScript(story, deepDiveScripts.length);
+        }
+      }
 
       deepDiveScripts.push({
         headline: story.headline,
@@ -811,29 +869,32 @@ app.post('/api/generate-podcast', async (req, res) => {
       const hdline = deep.headline;
       const src = deep.source;
 
-      const tasks = await createSunoTaskFromScript({
-        articleTxt,
-        headline: hdline,
-        source: src,
-        tags,
-      });
-
-      if (tasks) {
-        selections.push({
-          headline: story.headline,
-          source: story.source || '',
-          summary: story.summary || '',
-          link: story.link || '',
-          reason: story.reason || '',
-          overviewScript: story.host_script || '',
-          deepDiveScript: deep.script || story.host_script || '',
-          articleContent: deep.articleContent || '',
-          songPrompt: prompt,
-          songTaskIds: tasks.taskIds || [],
-          songClipIds: tasks.clipIds || [],
+      let tasks = null;
+      try {
+        tasks = await createSunoTaskFromScript({
+          articleTxt,
+          headline: hdline,
+          source: src,
           tags,
         });
+      } catch (error) {
+        console.warn('Unable to create Suno task for podcast:', error.message);
       }
+
+      selections.push({
+        headline: story.headline,
+        source: story.source || '',
+        summary: story.summary || '',
+        link: story.link || '',
+        reason: story.reason || '',
+        overviewScript: story.host_script || '',
+        deepDiveScript: deep.script || story.host_script || '',
+        articleContent: deep.articleContent || '',
+        songPrompt: prompt,
+        songTaskIds: tasks?.taskIds || [],
+        songClipIds: tasks?.clipIds || [],
+        tags,
+      });
     }
 
     res.json({
