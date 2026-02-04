@@ -448,15 +448,28 @@ async function planPodcastWithOpenRouter(stories) {
     { role: 'user', content: user },
   ];
 
+  let raw = '';
+  let lastError;
   for (const model of LYRIC_MODELS) {
     console.log("trying model:", model);
     try {
       raw = await callOpenRouterWithRetries({ model, messages, attempts: 1 });
       break;
     } catch (e) {
-      // errors.push(`[${model}] ${e.message}`);
+      lastError = e;
+      if (e?.status && [401, 403].includes(e.status)) {
+        const authError = new Error('OpenRouter authentication failed.');
+        authError.status = e.status;
+        throw authError;
+      }
       continue;
     }
+  }
+
+  if (!raw) {
+    const failure = new Error('OpenRouter request failed for all models.');
+    if (lastError?.status) failure.status = lastError.status;
+    throw failure;
   }
   const parsed = extractJsonFromString(raw);
 
@@ -830,6 +843,12 @@ app.post('/api/generate-podcast', async (req, res) => {
     });
   } catch (error) {
     console.error('Podcast generation failed:', error);
+    if (error?.status && [401, 403].includes(error.status)) {
+      return res.status(error.status).json({
+        error: 'OpenRouter authentication failed.',
+        details: error.message,
+      });
+    }
     res
       .status(502)
       .json({ error: 'Unable to generate podcast.', details: error.message });
