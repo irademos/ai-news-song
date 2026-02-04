@@ -318,6 +318,72 @@
       border: 1px solid rgba(148,163,184,.15);
     }
 
+    .podcast-overview {
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+      padding: .75rem .85rem;
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,.15);
+      background: rgba(15,23,42,.35);
+    }
+
+    .podcast-overview.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(245,158,11,.35);
+    }
+
+    .podcast-overview__header,
+    .podcast-item__header,
+    .podcast-song-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .75rem;
+    }
+
+    .podcast-overview__label,
+    .podcast-item__label {
+      font-weight: 600;
+      color: rgba(226,232,240,.95);
+    }
+
+    .podcast-inline-button {
+      border: 1px solid rgba(148,163,184,.35);
+      background: rgba(15,23,42,.55);
+      color: var(--text);
+      border-radius: 999px;
+      padding: .35rem .85rem;
+      font-size: .85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s ease, border-color .2s ease, transform .15s ease;
+    }
+
+    .podcast-inline-button:hover:not(:disabled) {
+      background: rgba(245,158,11,.18);
+      border-color: rgba(245,158,11,.6);
+      transform: translateY(-1px);
+    }
+
+    .podcast-inline-button:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
+    .podcast-song-row {
+      margin-top: .5rem;
+      padding-top: .5rem;
+      border-top: 1px solid rgba(148,163,184,.15);
+      color: rgba(148,163,184,.9);
+      font-size: .95rem;
+    }
+
+    .podcast-song-title {
+      font-weight: 600;
+      color: rgba(226,232,240,.9);
+    }
+
     .podcast-script {
       color: rgba(226,232,240,.92);
       white-space: pre-wrap;
@@ -634,7 +700,13 @@
         </div>
         <div class="podcast-output" id="podcastOutput">
           <p id="podcastStatus" class="generate-song-status">Press Generate Podcast to start an AI-hosted news rundown.</p>
-          <div class="podcast-script" id="podcastOverview" aria-live="polite"></div>
+          <div class="podcast-overview">
+            <div class="podcast-overview__header">
+              <span class="podcast-overview__label">Intro</span>
+              <button type="button" class="podcast-inline-button" data-role="podcast-narrate" data-type="overview" aria-label="Play or pause intro narration">Play</button>
+            </div>
+            <div class="podcast-script" id="podcastOverview" aria-live="polite"></div>
+          </div>
           <ol id="podcastSegments" class="podcast-list"></ol>
         </div>
       </section>
@@ -759,6 +831,10 @@
     let generateSongButton=null, generatePodcastButton=null, genreSelect=null, customTagsInput=null, activeContentTab='article';
     let podcastPrevButton=null, podcastNextButton=null, podcastPlayPauseButton=null;
     let currentNarrationResolver=null, currentClipResolver=null;
+    let currentNarrationTarget=null;
+    let narrationUsesSpeechSynthesis=false;
+    let currentAudioMode=null;
+    let currentPodcastSongTarget=null;
 
     /* ---------- DOM Helpers ---------- */
     const $ = sel => document.querySelector(sel);
@@ -776,7 +852,16 @@
         audio.addEventListener(evt, updateDockState);
       });
       ['play','pause','ended'].forEach(evt=>{
-        audio.addEventListener(evt, updatePodcastControlButtons);
+        audio.addEventListener(evt, (event)=>{
+          if(event.type === 'ended'){
+            if(currentAudioMode === 'song'){
+              currentPodcastSongTarget = null;
+            }
+            currentAudioMode = null;
+          }
+          updatePodcastControlButtons();
+          renderPodcastScripts();
+        });
       });
     }
 
@@ -864,11 +949,19 @@
       document.body.classList.toggle('has-audio', !!src);
     }
 
-    const getPodcastStepCount = ()=>{
-      if(!podcastState) return 0;
-      const selectionsCount = Array.isArray(podcastState.selections) ? podcastState.selections.length : 0;
-      return (podcastState.overviewScript ? 1 : 0) + selectionsCount;
+    const buildPodcastSteps = ()=>{
+      if(!podcastState) return [];
+      const selections = Array.isArray(podcastState.selections) ? podcastState.selections : [];
+      const steps = [];
+      if(podcastState.overviewScript) steps.push({ type: 'overview' });
+      selections.forEach((seg, idx)=>{
+        steps.push({ type: 'segment', seg, index: idx });
+        steps.push({ type: 'song', seg, index: idx });
+      });
+      return steps;
     };
+
+    const getPodcastStepCount = ()=> buildPodcastSteps().length;
 
     const takePodcastNavRequest = ()=>{
       const dir = podcastNavRequest;
@@ -911,8 +1004,11 @@
       try { currentAudio?.pause(); } catch {}
       const player = document.getElementById('audioPlayer');
       player?.pause?.();
+      currentPodcastSongTarget = null;
+      currentAudioMode = null;
 
       updatePodcastControlButtons();
+      renderPodcastScripts();
     }
 
     function togglePodcastPause(){
@@ -921,6 +1017,7 @@
       if(player.paused){ player.play().catch(()=>{}); }
       else { player.pause(); }
       updatePodcastControlButtons();
+      renderPodcastScripts();
     }
 
     /* ---------- Podcast helpers ---------- */
@@ -940,6 +1037,8 @@
         utterance.onend = () => settle({});
         utterance.onerror = () => settle({});
 
+        narrationUsesSpeechSynthesis = true;
+        currentAudioMode = 'narration';
         currentNarrationResolver = (payload={}) => {
           try { window.speechSynthesis.cancel(); } catch {}
           settle(payload);
@@ -970,6 +1069,8 @@
           finished = true;
           currentNarrationResolver = null;
           currentAudio = null;
+          narrationUsesSpeechSynthesis = false;
+          currentAudioMode = null;
           resolve(payload);
         };
 
@@ -1004,6 +1105,8 @@
 
             audioEl?.load();
             currentAudio = audioEl;
+            narrationUsesSpeechSynthesis = false;
+            currentAudioMode = 'narration';
 
             audioEl?.addEventListener('ended', onEnd);
             audioEl?.addEventListener('error', onError);
@@ -1023,6 +1126,8 @@
             updateDockState();
           } else {
             currentAudio = audio;
+            narrationUsesSpeechSynthesis = false;
+            currentAudioMode = 'narration';
 
             audio.onended = () => settle({});
             audio.onerror = () => settle({});
@@ -1055,23 +1160,210 @@
       }
       overviewEl.textContent = decodeHtmlEntities(podcastState.overviewScript || '');
       list.innerHTML='';
+      const steps = buildPodcastSteps();
+      const currentStep = steps[currentPodcastStep] || null;
+      const overviewButton = document.querySelector('[data-role="podcast-narrate"][data-type="overview"]');
+      if(overviewButton){
+        const isActive = currentStep?.type === 'overview';
+        const isNarratingOverview = currentNarrationTarget?.type === 'overview';
+        overviewButton.textContent = isNarratingOverview && isNarrationPlaying() ? 'Pause' : 'Play';
+        overviewButton.disabled = !(podcastState.overviewScript || '').trim();
+        overviewButton.closest('.podcast-overview')?.classList.toggle('active', isActive);
+      }
+
       (podcastState.selections||[]).forEach((seg,idx)=>{
         const li=document.createElement('li');
-        li.classList.toggle('active', idx===podcastQueueIndex);
+        const isActiveSegment = currentStep?.type === 'segment' && currentStep.index === idx;
+        const isActiveSong = currentStep?.type === 'song' && currentStep.index === idx;
+        li.classList.toggle('active', isActiveSegment || isActiveSong);
         const title=document.createElement('div');
+        title.className='podcast-item__header';
         const headlineText = decodeHtmlEntities(seg.headline || 'Article');
         const sourceText = decodeHtmlEntities(seg.source || '');
         const strong=document.createElement('strong');
         strong.textContent = headlineText;
-        title.appendChild(strong);
-        if (sourceText) title.append(` — ${sourceText}`);
+        strong.className='podcast-item__label';
+        const titleWrap=document.createElement('span');
+        titleWrap.appendChild(strong);
+        if (sourceText) titleWrap.append(` — ${sourceText}`);
+        title.appendChild(titleWrap);
+        const narrateButton = document.createElement('button');
+        narrateButton.type='button';
+        narrateButton.className='podcast-inline-button';
+        narrateButton.dataset.role='podcast-narrate';
+        narrateButton.dataset.type='segment';
+        narrateButton.dataset.index=String(idx);
+        narrateButton.setAttribute('aria-label', `Play or pause narration for ${headlineText}`);
+        const isNarrating = currentNarrationTarget?.type === 'segment' && currentNarrationTarget.index === idx;
+        narrateButton.textContent = isNarrating && isNarrationPlaying() ? 'Pause' : 'Play';
+        title.appendChild(narrateButton);
         const script=document.createElement('div');
         script.className='podcast-script';
         script.textContent = decodeHtmlEntities(seg.deepDiveScript || seg.overviewScript || '');
         li.appendChild(title);
         li.appendChild(script);
+        const songRow = document.createElement('div');
+        songRow.className='podcast-song-row';
+        const songTitle = decodeHtmlEntities(seg.song?.title || seg.songTitle || 'Suno track');
+        const songLabel = document.createElement('span');
+        songLabel.className='podcast-song-title';
+        const hasSongAudio = Boolean(seg.song?.audioUrl || seg.song?.streamUrl);
+        songLabel.textContent = hasSongAudio ? songTitle : `${songTitle} (pending)`;
+        const songButton = document.createElement('button');
+        songButton.type='button';
+        songButton.className='podcast-inline-button';
+        songButton.dataset.role='podcast-song';
+        songButton.dataset.index=String(idx);
+        songButton.setAttribute('aria-label', `Play or pause Suno track for ${headlineText}`);
+        const isSongActive = currentPodcastSongTarget?.index === idx;
+        songButton.textContent = isSongActive && currentAudioMode === 'song' && !isAudioPaused() ? 'Pause' : 'Play';
+        songButton.disabled = !hasSongAudio && !((seg.songTaskIds||[]).length || (seg.songClipIds||[]).length);
+        songRow.appendChild(songLabel);
+        songRow.appendChild(songButton);
+        li.appendChild(songRow);
         list.appendChild(li);
       });
+    }
+
+    function isNarrationPlaying(){
+      if(narrationUsesSpeechSynthesis){
+        return window.speechSynthesis.speaking && !window.speechSynthesis.paused;
+      }
+      if(currentAudio && typeof currentAudio.paused === 'boolean'){
+        return !currentAudio.paused;
+      }
+      return false;
+    }
+
+    function isAudioPaused(){
+      const player = document.getElementById('audioPlayer');
+      return player ? player.paused : true;
+    }
+
+    function pauseNarration(){
+      if(narrationUsesSpeechSynthesis){
+        try { window.speechSynthesis.pause(); } catch {}
+        return;
+      }
+      if(currentAudio){
+        try { currentAudio.pause(); } catch {}
+      }
+    }
+
+    function resumeNarration(){
+      if(narrationUsesSpeechSynthesis){
+        try { window.speechSynthesis.resume(); } catch {}
+        return;
+      }
+      if(currentAudio){
+        currentAudio.play().catch(()=>{});
+      }
+    }
+
+    function findPodcastStepIndex(type, index){
+      const steps = buildPodcastSteps();
+      if(type === 'overview'){
+        return steps.findIndex(step=>step.type === 'overview');
+      }
+      return steps.findIndex(step=>step.type === type && step.index === index);
+    }
+
+    async function toggleNarrationForStep({type, index, text}){
+      if(!text) return;
+      const sameTarget = currentNarrationTarget?.type === type && currentNarrationTarget?.index === index;
+      if(sameTarget){
+        if(isNarrationPlaying()){
+          pauseNarration();
+        } else {
+          resumeNarration();
+        }
+        renderPodcastScripts();
+        return;
+      }
+
+      const stepIndex = findPodcastStepIndex(type, index);
+      if(stepIndex >= 0){
+        currentPodcastStep = stepIndex;
+      }
+
+      if(currentNarrationResolver){
+        currentNarrationResolver({});
+        currentNarrationResolver = null;
+      }
+      currentNarrationTarget = { type, index };
+      updatePodcastControlButtons();
+      renderPodcastScripts();
+      await speakText(text);
+      currentNarrationTarget = null;
+      renderPodcastScripts();
+    }
+
+    async function togglePodcastSongPlayback(seg, index){
+      if(!seg) return;
+      const hasAudio = Boolean(seg.song?.audioUrl || seg.song?.streamUrl);
+      const canQueue = hasAudio || (seg.songTaskIds||[]).length || (seg.songClipIds||[]).length;
+      if(!canQueue) return;
+
+      if(currentNarrationResolver){
+        currentNarrationResolver({});
+        currentNarrationResolver = null;
+      }
+
+      const player = document.getElementById('audioPlayer');
+      if(!player) return;
+
+      const sameTarget = currentPodcastSongTarget?.index === index;
+      if(sameTarget && currentAudioMode === 'song'){
+        if(player.paused){ player.play().catch(()=>{}); }
+        else { player.pause(); }
+        renderPodcastScripts();
+        return;
+      }
+
+      const stepIndex = findPodcastStepIndex('song', index);
+      if(stepIndex >= 0){
+        currentPodcastStep = stepIndex;
+      }
+
+      currentPodcastSongTarget = { index };
+      const song = hasAudio ? seg.song : await beginSongPollForSegment(seg);
+      const src = getPlayableAudioUrl(song?.audioUrl || song?.streamUrl || '');
+      if(!src){ renderPodcastScripts(); return; }
+      currentAudioMode = 'song';
+      document.getElementById('audioSource').src = src;
+      player.load();
+      player.play().catch(()=>{});
+      updatePodcastControlButtons();
+      renderPodcastScripts();
+    }
+
+    function handlePodcastOutputClick(event){
+      const button = event.target.closest('button');
+      if(!button || !podcastState) return;
+      const role = button.dataset.role;
+      if(role === 'podcast-narrate'){
+        const type = button.dataset.type;
+        if(type === 'overview'){
+          toggleNarrationForStep({ type: 'overview', index: null, text: podcastState.overviewScript || '' });
+          return;
+        }
+        if(type === 'segment'){
+          const index = Number(button.dataset.index);
+          const seg = (podcastState.selections || [])[index];
+          if(!seg) return;
+          toggleNarrationForStep({
+            type: 'segment',
+            index,
+            text: seg.deepDiveScript || seg.overviewScript || seg.reason || ''
+          });
+        }
+      }
+      if(role === 'podcast-song'){
+        const index = Number(button.dataset.index);
+        const seg = (podcastState.selections || [])[index];
+        if(!seg) return;
+        togglePodcastSongPlayback(seg, index);
+      }
     }
 
     function playClip(url){
@@ -1088,10 +1380,12 @@
           audio?.removeEventListener('ended', finish);
           audio?.removeEventListener('error', finish);
           currentClipResolver = null;
+          currentAudioMode = null;
           resolve();
         };
 
         currentClipResolver = finish;
+        currentAudioMode = 'song';
 
         audio?.addEventListener('ended', finish);
         audio?.addEventListener('error', finish);
@@ -1204,6 +1498,8 @@
       updateDockState();
       currentPodcastStep = -1;
       podcastNavRequest = null;
+      currentNarrationTarget = null;
+      currentPodcastSongTarget = null;
       updatePodcastControlButtons();
     }
 
@@ -1916,12 +2212,7 @@
 
       try {
         const selections = Array.isArray(podcastState.selections) ? podcastState.selections : [];
-        const steps = [];
-
-        if(podcastState.overviewScript){
-          steps.push({ type: 'overview', script: podcastState.overviewScript });
-        }
-        selections.forEach((seg, idx)=> steps.push({ type: 'segment', seg, index: idx }));
+        const steps = buildPodcastSteps();
 
         if(selections[0]) beginSongPollForSegment(selections[0]);
 
@@ -1939,7 +2230,9 @@
 
           if(step.type === 'overview'){
             updatePodcastStatus('Narrating podcast overview…');
-            const res = await speakText(step.script);
+            currentNarrationTarget = { type: 'overview', index: null };
+            const res = await speakText(podcastState.overviewScript || '');
+            currentNarrationTarget = null;
             const nav = res?.nav || takePodcastNavRequest();
             if(nav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
             if(nav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
@@ -1950,11 +2243,21 @@
             renderPodcastScripts();
             const seg = step.seg;
             updatePodcastStatus(`Talking through ${seg.headline || 'a top story'}…`);
+            currentNarrationTarget = { type: 'segment', index: step.index };
             const res = await speakText(seg.deepDiveScript || seg.overviewScript || seg.reason || '');
+            currentNarrationTarget = null;
             const nav = res?.nav || takePodcastNavRequest();
             if(nav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
             if(nav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
 
+            const next = selections[step.index+1];
+            if(next) beginSongPollForSegment(next);
+          }
+
+          if(step.type === 'song'){
+            podcastQueueIndex = step.index;
+            renderPodcastScripts();
+            const seg = step.seg;
             const song = await beginSongPollForSegment(seg);
             if(podcastNavRequest){
               const dir = takePodcastNavRequest();
@@ -1964,15 +2267,17 @@
 
             if(song && (song.audioUrl || song.streamUrl)){
               updatePodcastStatus('Playing Suno track…');
+              currentPodcastSongTarget = { index: step.index };
               await playClip(song.audioUrl || song.streamUrl);
+              currentPodcastSongTarget = null;
+            } else {
+              const hasTasks = (seg.songTaskIds||[]).length || (seg.songClipIds||[]).length;
+              updatePodcastStatus(hasTasks ? 'Suno track is still rendering…' : 'No Suno track is available for this story.');
             }
 
             const pendingNav = takePodcastNavRequest();
             if(pendingNav === 'prev'){ stepIndex = Math.max(0, stepIndex - 1); continue; }
             if(pendingNav === 'next'){ stepIndex = Math.min(steps.length, stepIndex + 1); continue; }
-
-            const next = selections[step.index+1];
-            if(next) beginSongPollForSegment(next);
           }
 
           stepIndex += 1;
@@ -1981,6 +2286,8 @@
         podcastQueueIndex = -1;
         currentPodcastStep = -1;
         podcastNavRequest = null;
+        currentNarrationTarget = null;
+        currentPodcastSongTarget = null;
         renderPodcastScripts();
         updatePodcastStatus('Podcast finished.');
 
@@ -2018,6 +2325,7 @@
       } finally {
         podcastIsPlaying = false;
         updatePodcastControlButtons();
+        renderPodcastScripts();
       }
     }
 
@@ -2425,6 +2733,7 @@
       podcastPrevButton = $('#podcastPrevButton');
       podcastNextButton = $('#podcastNextButton');
       podcastPlayPauseButton = $('#podcastPlayPauseButton');
+      const podcastOutput = document.getElementById('podcastOutput');
       customTagsInput?.addEventListener('keydown', evt=>{
         if(evt.key==='Enter'){
           evt.preventDefault();
@@ -2442,6 +2751,7 @@
       podcastPrevButton?.addEventListener('click', ()=> requestPodcastNavigation('prev'));
       podcastNextButton?.addEventListener('click', ()=> requestPodcastNavigation('next'));
       podcastPlayPauseButton?.addEventListener('click', togglePodcastPause);
+      podcastOutput?.addEventListener('click', handlePodcastOutputClick);
 
       // Desktop sidebar tabs
       document.querySelectorAll('[data-role="desktop-sidebar-tab"]').forEach(btn => {
