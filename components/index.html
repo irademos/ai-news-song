@@ -1561,6 +1561,31 @@
       };
     }
 
+    function sanitizeFirestorePayload(value){
+      if(value === undefined) return undefined;
+      if(value === null) return null;
+      if(typeof value === 'function') return undefined;
+      if(value && typeof value.then === 'function') return undefined;
+
+      if(Array.isArray(value)){
+        const cleaned = value
+          .map(entry => sanitizeFirestorePayload(entry))
+          .filter(entry => entry !== undefined);
+        return cleaned;
+      }
+
+      if(typeof value === 'object'){
+        const out = {};
+        Object.entries(value).forEach(([key, entry])=>{
+          const cleaned = sanitizeFirestorePayload(entry);
+          if(cleaned !== undefined) out[key] = cleaned;
+        });
+        return out;
+      }
+
+      return value;
+    }
+
     async function savePodcastSpin({podcast, episodeRef}){
       if(!db) throw new Error('Firebase is not available.');
       if(!podcast) throw new Error('No podcast payload to save.');
@@ -1568,6 +1593,7 @@
       const spinsRef = collection(db,'spins');
       const generatedIso = podcast.createdAtIso || new Date().toISOString();
       const selections = Array.isArray(podcast.selections) ? podcast.selections : [];
+      const sanitizedSelections = sanitizeFirestorePayload(selections);
       const firstSong = pickPrimaryPodcastSong(selections);
       const primaryTaskId = firstSong.taskIds?.[0] || '';
       const headlineForMeta = selections[0]?.headline || 'Daily Spin Podcast';
@@ -1592,7 +1618,7 @@
         generatedAtIso: generatedIso,
         tags: '',
         podcastOverview: podcast.overviewScript || '',
-        podcastSelections: selections,
+        podcastSelections: sanitizedSelections,
         podcastId: episodeRef?.id || '',
       };
 
@@ -1639,17 +1665,19 @@
         };
       }));
 
-      await updateDoc(docRef, { selections: resolvedSelections });
-      return resolvedSelections;
+      const sanitizedSelections = sanitizeFirestorePayload(resolvedSelections);
+      await updateDoc(docRef, { selections: sanitizedSelections });
+      return sanitizedSelections;
     }
 
     async function finalizePodcastSpin({docRef, selections=[]}){
       if(!docRef) return;
       const resolvedSelections = Array.isArray(selections) ? selections : [];
+      const sanitizedSelections = sanitizeFirestorePayload(resolvedSelections);
       const primary = pickPrimaryPodcastSong(resolvedSelections);
 
       const updatePayload = {
-        podcastSelections: resolvedSelections,
+        podcastSelections: sanitizedSelections,
       };
 
       if(primary.audioUrl || primary.streamUrl){
@@ -2344,15 +2372,16 @@
 
             // Replace selections in-place so playPodcastQueue sees richer data
             if (podcastState) {
-              podcastState.selections = fullSelections;
+              const sanitizedSelections = sanitizeFirestorePayload(fullSelections);
+              podcastState.selections = sanitizedSelections;
               renderPodcastScripts();
 
               if(podcastState.episodeRef){
-                updateDoc(podcastState.episodeRef, { selections: fullSelections }).catch(()=>{});
+                updateDoc(podcastState.episodeRef, { selections: sanitizedSelections }).catch(()=>{});
               }
               if(podcastState.spinRef){
-                const primary = pickPrimaryPodcastSong(fullSelections);
-                const updatePayload = { podcastSelections: fullSelections };
+                const primary = pickPrimaryPodcastSong(sanitizedSelections);
+                const updatePayload = { podcastSelections: sanitizedSelections };
                 if(primary.audioUrl || primary.streamUrl){
                   updatePayload.audioUrl = primary.audioUrl || primary.streamUrl || '';
                   updatePayload.streamUrl = primary.streamUrl || primary.audioUrl || '';
