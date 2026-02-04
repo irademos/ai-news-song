@@ -920,6 +920,31 @@
     /* ---------- Podcast helpers ---------- */
     let currentAudio = null;
 
+    function speakTextWithBrowser(text, settle) {
+      if (!('speechSynthesis' in window)) {
+        settle({});
+        return;
+      }
+
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.onend = () => settle({});
+        utterance.onerror = () => settle({});
+
+        currentNarrationResolver = (payload={}) => {
+          try { window.speechSynthesis.cancel(); } catch {}
+          settle(payload);
+        };
+
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        settle({});
+      }
+    }
+
     async function speakText(text) {
       return new Promise(async (resolve) => {
         if (!text) { resolve({}); return; }
@@ -954,6 +979,11 @@
 
           const src = audio?.src || '';
           const useDockedPlayer = !!(audioEl && src);
+
+          if (!src) {
+            speakTextWithBrowser(text, settle);
+            return;
+          }
 
           if (useDockedPlayer) {
             const onEnd = () => settle({});
@@ -1001,7 +1031,7 @@
           }
         } catch (err) {
           console.error("Puter/OpenAI TTS error:", err);
-          settle({});
+          speakTextWithBrowser(text, settle);
         }
       });
     }
