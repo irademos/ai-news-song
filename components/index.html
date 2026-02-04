@@ -2280,7 +2280,7 @@
           body: JSON.stringify(payload),
         });
         const body = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(body?.error || 'Unable to start podcast.');
+        if (!r.ok) throw new Error(body?.details || body?.error || 'Unable to start podcast.');
 
         const selections = Array.isArray(body?.selections) ? body.selections : [];
         podcastState = {
@@ -2330,7 +2330,7 @@
               body: JSON.stringify(payload),
             });
             const fullBody = await rFull.json().catch(() => ({}));
-            if (!rFull.ok) throw new Error(fullBody?.error || 'Unable to finish podcast generation.');
+            if (!rFull.ok) throw new Error(fullBody?.details || fullBody?.error || 'Unable to finish podcast generation.');
 
             let fullSelections = Array.isArray(fullBody?.selections)
               ? fullBody.selections
