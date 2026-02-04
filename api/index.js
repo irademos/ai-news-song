@@ -899,10 +899,37 @@ app.get('/api/song-status', async (req, res) => {
         });
         const raw = await r.text();
         let j; try { j = JSON.parse(raw); } catch { j = raw; }
-        if (!r.ok) throw new Error(typeof j === 'object' ? JSON.stringify(j) : String(j));
-        return Array.isArray(j?.data) ? j.data : [];
+
+        if (r.ok) {
+          return { id, ok: true, data: Array.isArray(j?.data) ? j.data : [] };
+        }
+
+        const details = typeof j === 'object' ? j : String(j);
+        if ([401, 403].includes(r.status)) {
+          return { id, ok: false, authError: true, status: r.status, details };
+        }
+
+        if ([400, 404, 422].includes(r.status)) {
+          return { id, ok: false, pending: true, status: r.status, details };
+        }
+
+        return { id, ok: false, status: r.status, details };
       }));
-      rows = results.flat();
+
+      const authFailure = results.find((r) => r.authError);
+      if (authFailure) {
+        return res.status(authFailure.status).json({
+          error: 'Suno authentication failed.',
+          details: authFailure.details,
+        });
+      }
+
+      const completedRows = results.flatMap((r) => (r.ok ? r.data : []));
+      const pendingRows = results
+        .filter((r) => !r.ok && r.pending)
+        .map((r) => ({ task_id: r.id, state: 'pending' }));
+
+      rows = [...completedRows, ...pendingRows];
     } else {
       // Fallback: list recent tasks, then filter by clip_ids
       const r = await fetch('https://api.sunoapi.com/api/v1/suno/task/', {
@@ -918,6 +945,7 @@ app.get('/api/song-status', async (req, res) => {
     return res.json({
       code: 200,
       data: rows.map(r => ({
+        task_id: r.task_id,
         clip_id: r.clip_id,
         state: r.state,
         title: r.title,
