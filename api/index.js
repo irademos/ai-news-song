@@ -849,6 +849,12 @@ app.post('/api/generate-podcast', async (req, res) => {
         details: error.message,
       });
     }
+    if (error?.status) {
+      return res.status(error.status).json({
+        error: 'Unable to generate podcast.',
+        details: error.message,
+      });
+    }
     res
       .status(502)
       .json({ error: 'Unable to generate podcast.', details: error.message });
