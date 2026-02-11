@@ -9,6 +9,7 @@ const MIN_ARTICLE_CHAR_LENGTH = 2000;
 
 const SUNO_PROMPT_MAX_CHARS = 3000;
 const OPEN_ROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const SONIC_API_BASE_URL = 'https://api.aimusicapi.ai/api/v1/sonic';
 const LYRIC_MODELS = [
   // Order matters: try fastest/cheapest first, then stronger fallbacks.
   'openai/gpt-4o-mini',
@@ -629,15 +630,16 @@ async function createSunoTaskFromScript({ articleTxt, headline, source, tags }) 
   if (!sunoApiKey) throw new Error('Suno API key is not configured.');
 
   const sunoPayload = {
+    task_type: 'create_music',
     custom_mode: true,
     prompt: lyrics,
     make_instrumental: false,
-    mv: 'chirp-v5',
+    mv: 'sonic-v4-5',
   };
 
   if (tags) sunoPayload.tags = tags;
 
-  const resp = await fetch('https://api.sunoapi.com/api/v1/suno/create', {
+  const resp = await fetch(`${SONIC_API_BASE_URL}/create`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${sunoApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(sunoPayload),
@@ -653,7 +655,9 @@ async function createSunoTaskFromScript({ articleTxt, headline, source, tags }) 
 
   let data; try { data = JSON.parse(raw); } catch { data = raw; }
   const toArray = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
-  const list = Array.isArray(data?.data) ? data.data : toArray(data);
+  const list = Array.isArray(data?.data)
+    ? data.data
+    : (data?.task_id ? [{ task_id: data.task_id }] : toArray(data));
 
   const taskIds = [];
   const clipIds = [];
@@ -719,17 +723,18 @@ app.post('/api/generate-song', async (req, res) => {
   const prompt = enforcePromptLimit(preparedLyrics);
 
   const sunoPayload = {
+    task_type: 'create_music',
     custom_mode: true,
     prompt: prompt,
     make_instrumental: false,
-    mv: 'chirp-v5',
+    mv: 'sonic-v4-5',
   };
 
   if (normalizedTags) {
     sunoPayload.tags = normalizedTags;
   }
 
-  const resp = await fetch('https://api.sunoapi.com/api/v1/suno/create', {
+  const resp = await fetch(`${SONIC_API_BASE_URL}/create`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${sunoApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(sunoPayload),
@@ -745,7 +750,9 @@ app.post('/api/generate-song', async (req, res) => {
 
   // Normalize IDs from various possible shapes
   const toArray = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
-  const list = Array.isArray(data?.data) ? data.data : toArray(data);
+  const list = Array.isArray(data?.data)
+    ? data.data
+    : (data?.task_id ? [{ task_id: data.task_id }] : toArray(data));
 
   const taskIds = [];
   const clipIds = [];
@@ -963,6 +970,86 @@ function normalizeStatusPayload(body) {
   return { data: combined };
 }
 
+async function fetchSonicTaskById({ taskId, apiKey }) {
+  const encodedId = encodeURIComponent(taskId);
+  const candidates = [
+    `${SONIC_API_BASE_URL}/music/${encodedId}`,
+    `${SONIC_API_BASE_URL}/task/${encodedId}`,
+    `${SONIC_API_BASE_URL}/get-music/${encodedId}`,
+    `${SONIC_API_BASE_URL}/get/${encodedId}`,
+    `https://api.sunoapi.com/api/v1/suno/task/${encodedId}`,
+  ];
+
+  let last = null;
+
+  for (const url of candidates) {
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const raw = await r.text();
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+
+    if (r.ok) {
+      const rows = normalizeStatusPayload(parsed).data;
+      if (rows.length === 0 && parsed?.task_id) {
+        return { ok: true, data: [{ task_id: parsed.task_id, ...parsed }] };
+      }
+      return { ok: true, data: rows };
+    }
+
+    if ([401, 403].includes(r.status)) {
+      return { ok: false, authError: true, status: r.status, details: parsed };
+    }
+
+    if ([400, 404, 422].includes(r.status)) {
+      last = { ok: false, pending: true, status: r.status, details: parsed };
+      continue;
+    }
+
+    last = { ok: false, status: r.status, details: parsed };
+  }
+
+  return last || { ok: false, pending: true, status: 404, details: 'Task not found yet.' };
+}
+
+async function fetchSonicTaskList({ apiKey }) {
+  const candidates = [
+    `${SONIC_API_BASE_URL}/task/`,
+    `${SONIC_API_BASE_URL}/music`,
+    'https://api.sunoapi.com/api/v1/suno/task/',
+  ];
+
+  let lastError = null;
+
+  for (const url of candidates) {
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    const raw = await r.text();
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+
+    if (r.ok) {
+      return normalizeStatusPayload(parsed).data;
+    }
+
+    if ([401, 403].includes(r.status)) {
+      const err = new Error('Suno authentication failed.');
+      err.status = r.status;
+      err.details = parsed;
+      throw err;
+    }
+
+    lastError = { status: r.status, details: parsed };
+  }
+
+  const err = new Error('Suno task fetch failed');
+  err.status = lastError?.status || 502;
+  err.details = lastError?.details || 'No status endpoint returned a successful response.';
+  throw err;
+}
+
 app.get('/api/song-status', async (req, res) => {
   const apiKey = process.env.suno_api || process.env.SUNO_API || process.env.SUNO_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'Suno API key is not configured.' });
@@ -978,28 +1065,9 @@ app.get('/api/song-status', async (req, res) => {
     let rows = [];
 
     if (taskIds.length) {
-      // Poll the documented endpoint per task id
       const results = await Promise.all(taskIds.map(async (id) => {
-        const r = await fetch(`https://api.sunoapi.com/api/v1/suno/task/${encodeURIComponent(id)}`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-        });
-        const raw = await r.text();
-        let j; try { j = JSON.parse(raw); } catch { j = raw; }
-
-        if (r.ok) {
-          return { id, ok: true, data: Array.isArray(j?.data) ? j.data : [] };
-        }
-
-        const details = typeof j === 'object' ? j : String(j);
-        if ([401, 403].includes(r.status)) {
-          return { id, ok: false, authError: true, status: r.status, details };
-        }
-
-        if ([400, 404, 422].includes(r.status)) {
-          return { id, ok: false, pending: true, status: r.status, details };
-        }
-
-        return { id, ok: false, status: r.status, details };
+        const result = await fetchSonicTaskById({ taskId: id, apiKey });
+        return { id, ...result };
       }));
 
       const authFailure = results.find((r) => r.authError);
@@ -1018,13 +1086,7 @@ app.get('/api/song-status', async (req, res) => {
       rows = [...completedRows, ...pendingRows];
     } else {
       // Fallback: list recent tasks, then filter by clip_ids
-      const r = await fetch('https://api.sunoapi.com/api/v1/suno/task/', {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      const raw = await r.text();
-      let j; try { j = JSON.parse(raw); } catch { j = raw; }
-      if (!r.ok) return res.status(r.status).json({ error: 'Suno task fetch failed', details: j });
-      rows = Array.isArray(j?.data) ? j.data : [];
+      rows = await fetchSonicTaskList({ apiKey });
       if (clipIds.length) rows = rows.filter(x => clipIds.includes(x.clip_id));
     }
 
