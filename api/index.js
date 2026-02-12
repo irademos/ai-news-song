@@ -654,10 +654,11 @@ async function createSunoTaskFromScript({ articleTxt, headline, source, tags }) 
   }
 
   let data; try { data = JSON.parse(raw); } catch { data = raw; }
+  console.log('[Sonic create] raw response (podcast):', typeof data === 'object' ? JSON.stringify(data).slice(0, 500) : String(data).slice(0, 500));
   const toArray = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
   const list = Array.isArray(data?.data)
     ? data.data
-    : (data?.task_id ? [{ task_id: data.task_id }] : toArray(data));
+    : (data?.data && typeof data.data === 'object' ? [data.data] : (data?.task_id ? [{ task_id: data.task_id }] : toArray(data)));
 
   const taskIds = [];
   const clipIds = [];
@@ -669,7 +670,10 @@ async function createSunoTaskFromScript({ articleTxt, headline, source, tags }) 
     if (item.song_id) clipIds.push(item.song_id);
   }
 
-  return { taskIds: [...new Set(taskIds)], clipIds: [...new Set(clipIds)] };
+  const uniqueTaskIds = [...new Set(taskIds)];
+  const uniqueClipIds = [...new Set(clipIds)];
+  console.log('[Sonic create] parsed ids (podcast):', { taskIds: uniqueTaskIds, clipIds: uniqueClipIds });
+  return { taskIds: uniqueTaskIds, clipIds: uniqueClipIds };
 }
 
 // POST /api/generate-song
@@ -747,12 +751,13 @@ app.post('/api/generate-song', async (req, res) => {
   }
 
   let data; try { data = JSON.parse(raw); } catch { data = raw; }
+  console.log('[Sonic create] raw response (generate-song):', typeof data === 'object' ? JSON.stringify(data).slice(0, 500) : String(data).slice(0, 500));
 
   // Normalize IDs from various possible shapes
   const toArray = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
   const list = Array.isArray(data?.data)
     ? data.data
-    : (data?.task_id ? [{ task_id: data.task_id }] : toArray(data));
+    : (data?.data && typeof data.data === 'object' ? [data.data] : (data?.task_id ? [{ task_id: data.task_id }] : toArray(data)));
 
   const taskIds = [];
   const clipIds = [];
@@ -765,11 +770,15 @@ app.post('/api/generate-song', async (req, res) => {
   }
 
   // If we got nothing, return the raw body to debug quickly
-  if (!taskIds.length && !clipIds.length) {
+  const uniqueTaskIds = [...new Set(taskIds)];
+  const uniqueClipIds = [...new Set(clipIds)];
+  console.log('[Sonic create] parsed ids (generate-song):', { taskIds: uniqueTaskIds, clipIds: uniqueClipIds });
+
+  if (!uniqueTaskIds.length && !uniqueClipIds.length) {
     return res.status(202).json({ task_ids: [], clip_ids: [], raw: data, prompt, summary: prompt, tags: normalizedTags });
   }
 
-  return res.status(202).json({ task_ids: [...new Set(taskIds)], clip_ids: [...new Set(clipIds)], prompt, summary: prompt, tags: normalizedTags });
+  return res.status(202).json({ task_ids: uniqueTaskIds, clip_ids: uniqueClipIds, prompt, summary: prompt, tags: normalizedTags });
 });
 
 // POST /api/generate-podcast
@@ -970,6 +979,79 @@ function normalizeStatusPayload(body) {
   return { data: combined };
 }
 
+function collectStatusCandidates(record) {
+  const out = [];
+  const push = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach(push);
+      return;
+    }
+    if (typeof value === 'object') out.push(value);
+  };
+
+  push(record);
+  push(record?.data);
+  push(record?.task);
+  push(record?.result);
+  push(record?.response);
+  push(record?.response?.data);
+  push(record?.response?.task);
+  push(record?.clips);
+  push(record?.tasks);
+  push(record?.songs);
+  push(record?.items);
+  push(record?.output);
+
+  return out;
+}
+
+function normalizeStatusRows(rows) {
+  const normalized = [];
+
+  for (const row of rows) {
+    const candidates = collectStatusCandidates(row);
+    const baseTaskId = row?.task_id || row?.id || '';
+
+    for (const item of candidates) {
+      const taskId = item?.task_id || item?.id || baseTaskId || '';
+      const clipId = item?.clip_id || item?.song_id || item?.id || row?.clip_id || '';
+      const audioUrl = item?.audio_url || item?.audioUrl || item?.stream_url || item?.streamUrl || item?.audio?.url || '';
+      const state = item?.state || item?.status || row?.state || row?.status || '';
+
+      if (!taskId && !clipId && !audioUrl && !state) continue;
+
+      normalized.push({
+        task_id: taskId,
+        clip_id: clipId,
+        state,
+        title: item?.title || row?.title || '',
+        tags: item?.tags || row?.tags || '',
+        lyrics: item?.lyrics || row?.lyrics || '',
+        image_url: item?.image_url || item?.imageUrl || row?.image_url || '',
+        audio_url: audioUrl,
+        video_url: item?.video_url || row?.video_url || '',
+        created_at: item?.created_at || row?.created_at || '',
+        mv: item?.mv || row?.mv || '',
+        duration: item?.duration || row?.duration || undefined,
+      });
+    }
+  }
+
+  if (!normalized.length) {
+    return rows;
+  }
+
+  const seen = new Set();
+  return normalized.filter((item) => {
+    const key = `${item.task_id || ''}|${item.clip_id || ''}|${item.audio_url || ''}|${item.state || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+
 async function fetchSonicTaskById({ taskId, apiKey }) {
   const encodedId = encodeURIComponent(taskId);
   const candidates = [
@@ -992,6 +1074,7 @@ async function fetchSonicTaskById({ taskId, apiKey }) {
 
     if (r.ok) {
       const rows = normalizeStatusPayload(parsed).data;
+      console.log('[Sonic status] task poll success:', { taskId, endpoint: url, rows: Array.isArray(rows) ? rows.length : 0 });
       if (rows.length === 0 && parsed?.task_id) {
         return { ok: true, data: [{ task_id: parsed.task_id, ...parsed }] };
       }
@@ -1003,6 +1086,7 @@ async function fetchSonicTaskById({ taskId, apiKey }) {
     }
 
     if ([400, 404, 422].includes(r.status)) {
+      console.log('[Sonic status] task not ready yet:', { taskId, endpoint: url, status: r.status });
       last = { ok: false, pending: true, status: r.status, details: parsed };
       continue;
     }
@@ -1078,7 +1162,7 @@ app.get('/api/song-status', async (req, res) => {
         });
       }
 
-      const completedRows = results.flatMap((r) => (r.ok ? r.data : []));
+      const completedRows = normalizeStatusRows(results.flatMap((r) => (r.ok ? r.data : [])));
       const pendingRows = results
         .filter((r) => !r.ok && r.pending)
         .map((r) => ({ task_id: r.id, state: 'pending' }));
@@ -1086,10 +1170,11 @@ app.get('/api/song-status', async (req, res) => {
       rows = [...completedRows, ...pendingRows];
     } else {
       // Fallback: list recent tasks, then filter by clip_ids
-      rows = await fetchSonicTaskList({ apiKey });
+      rows = normalizeStatusRows(await fetchSonicTaskList({ apiKey }));
       if (clipIds.length) rows = rows.filter(x => clipIds.includes(x.clip_id));
     }
 
+    console.log('[Sonic status] query/result summary:', { taskIds, clipIds, rowCount: rows.length, sample: rows[0] || null });
     return res.json({
       code: 200,
       data: rows.map(r => ({
