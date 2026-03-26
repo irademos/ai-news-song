@@ -2358,7 +2358,9 @@
         // When a podcast is mid-playback, avoid auto-switching to a new
         // item (which could hijack the player and clear the podcast scripts).
         if(selected){
-          setCurrentSong(selected);
+          // Keep the current selection in sync without starting playback
+          // when snapshot updates arrive during initial page load.
+          setCurrentSong(selected, { autoPlay: false });
         } else if(!podcastIsPlaying && merged[0]){
           setCurrentSong(merged[0], { autoPlay: false });
         }
