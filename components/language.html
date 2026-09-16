@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Daily Spin — Noticias en Español</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-alt: #1f2933;
+      --accent: #f59e0b;
+      --accent2: #34d399;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      font-family: "Inter", "Segoe UI", Roboto, system-ui, -apple-system, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    h1, h2, h3, p { margin: 0; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(245,158,11,.08), transparent 45%),
+        var(--bg);
+    }
+
+    .page-shell {
+      width: min(900px, 100%);
+      margin: 0 auto;
+    }
+
+    /* Nav */
+    .top-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2rem;
+      gap: 1rem;
+    }
+    .back-link {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: .9rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+      transition: color .2s;
+    }
+    .back-link:hover { color: var(--text); }
+    .lang-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .35rem .85rem;
+      border-radius: 999px;
+      background: rgba(245,158,11,.18);
+      color: var(--accent);
+      font-size: .8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+    }
+
+    /* Header */
+    .page-header {
+      margin-bottom: 2rem;
+    }
+    .page-header h1 {
+      font-size: clamp(1.8rem, 4vw, 2.6rem);
+      font-weight: 700;
+      letter-spacing: -.02em;
+    }
+    .page-header p {
+      color: var(--muted);
+      margin-top: .5rem;
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+
+    /* Source tabs */
+    .source-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      margin-bottom: 1.75rem;
+    }
+    .source-tab {
+      background: rgba(148,163,184,.12);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 999px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: .85rem;
+      font-weight: 600;
+      padding: .4rem .9rem;
+      transition: background .2s, color .2s, border-color .2s;
+    }
+    .source-tab.active {
+      background: rgba(245,158,11,.18);
+      border-color: rgba(245,158,11,.55);
+      color: var(--accent);
+    }
+    .source-tab:hover:not(.active) {
+      background: rgba(148,163,184,.2);
+      color: var(--text);
+    }
+
+    /* Story grid */
+    .story-grid {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .story-card {
+      background: rgba(15,23,42,.7);
+      border: 1px solid rgba(148,163,184,.15);
+      border-radius: 18px;
+      padding: 1.25rem 1.4rem;
+      transition: border-color .2s, transform .15s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+    .story-card:hover {
+      border-color: rgba(245,158,11,.45);
+      transform: translateY(-2px);
+    }
+
+    .story-card__meta {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      flex-wrap: wrap;
+      margin-bottom: .6rem;
+    }
+    .source-chip {
+      font-size: .75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      padding: .2rem .6rem;
+      border-radius: 999px;
+      background: rgba(148,163,184,.15);
+      color: var(--muted);
+    }
+    .native-badge {
+      font-size: .7rem;
+      font-weight: 700;
+      padding: .2rem .55rem;
+      border-radius: 999px;
+      background: rgba(52,211,153,.15);
+      color: var(--accent2);
+    }
+    .translated-badge {
+      font-size: .7rem;
+      font-weight: 700;
+      padding: .2rem .55rem;
+      border-radius: 999px;
+      background: rgba(96,165,250,.15);
+      color: #60a5fa;
+    }
+
+    .story-card__headline {
+      font-size: 1.05rem;
+      font-weight: 600;
+      line-height: 1.45;
+      margin-bottom: .45rem;
+    }
+    .story-card__summary {
+      font-size: .9rem;
+      color: var(--muted);
+      line-height: 1.55;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* Loading / empty */
+    .status-msg {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+    .spinner {
+      display: inline-block;
+      width: 28px; height: 28px;
+      border: 3px solid rgba(148,163,184,.25);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin-bottom: .75rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Footer note */
+    .footer-note {
+      margin-top: 2.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid rgba(148,163,184,.12);
+      color: var(--muted);
+      font-size: .8rem;
+      line-height: 1.6;
+      text-align: center;
+    }
+    .footer-note a { color: var(--accent); text-decoration: none; }
+    .footer-note a:hover { text-decoration: underline; }
+
+    @media (max-width: 600px) {
+      body { padding: 1.25rem .75rem; }
+      .story-card { padding: 1rem 1.1rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-shell">
+    <nav class="top-nav">
+      <a class="back-link" href="/">← Volver / Back</a>
+      <span class="lang-badge">🌎 En Español</span>
+    </nav>
+
+    <header class="page-header">
+      <h1>Noticias en Español</h1>
+      <p>
+        Titulares del mundo en español — fuentes originales en español y noticias en inglés traducidas automáticamente.
+      </p>
+    </header>
+
+    <div class="source-tabs" id="sourceTabs">
+      <button class="source-tab active" data-source="all">Todas las fuentes</button>
+    </div>
+
+    <div id="storyGrid" class="story-grid">
+      <div class="status-msg">
+        <div class="spinner"></div><br>
+        Cargando noticias…
+      </div>
+    </div>
+
+    <p class="footer-note">
+      Fuentes originales: BBC Mundo, La Opinión, CNN en Español, Democracy Now en Español.<br>
+      Las noticias marcadas como <strong>Traducido</strong> provienen de fuentes en inglés y fueron traducidas automáticamente con
+      <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a>.<br>
+      <a href="/">← Volver a Daily Spin</a>
+    </p>
+  </div>
+
+  <script type="module">
+    let allStories = [];
+    let activeSource = 'all';
+
+    const decodeHtml = (str) => {
+      const t = document.createElement('textarea');
+      t.innerHTML = str;
+      return t.value;
+    };
+
+    async function loadStories() {
+      const grid = document.getElementById('storyGrid');
+      grid.innerHTML = '<div class="status-msg"><div class="spinner"></div><br>Cargando noticias…</div>';
+      try {
+        const res = await fetch('/api/spanish-news');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { stories } = await res.json();
+        allStories = stories || [];
+        buildSourceTabs();
+        renderStories();
+      } catch (err) {
+        grid.innerHTML = `<div class="status-msg">Error al cargar las noticias: ${err.message}</div>`;
+      }
+    }
+
+    function buildSourceTabs() {
+      const tabs = document.getElementById('sourceTabs');
+      const sources = ['all', ...new Set(allStories.map((s) => s.source).filter(Boolean))];
+      tabs.innerHTML = '';
+      sources.forEach((src) => {
+        const btn = document.createElement('button');
+        btn.className = 'source-tab' + (src === activeSource ? ' active' : '');
+        btn.dataset.source = src;
+        btn.textContent = src === 'all' ? 'Todas las fuentes' : decodeHtml(src);
+        btn.addEventListener('click', () => {
+          activeSource = src;
+          tabs.querySelectorAll('.source-tab').forEach((b) => b.classList.toggle('active', b.dataset.source === src));
+          renderStories();
+        });
+        tabs.appendChild(btn);
+      });
+    }
+
+    function renderStories() {
+      const grid = document.getElementById('storyGrid');
+      const filtered = activeSource === 'all'
+        ? allStories
+        : allStories.filter((s) => s.source === activeSource);
+
+      if (!filtered.length) {
+        grid.innerHTML = '<div class="status-msg">No se encontraron noticias para esta fuente.</div>';
+        return;
+      }
+
+      grid.innerHTML = '';
+      filtered.forEach((story) => {
+        const headline = decodeHtml(story.headline || '');
+        const summary = decodeHtml(story.summary || '');
+        const source = decodeHtml(story.source || '');
+        const isNative = story.lang === 'es' && !story.originalLang;
+
+        const card = document.createElement('a');
+        card.className = 'story-card';
+        card.href = story.link || '#';
+        if (story.link) {
+          card.target = '_blank';
+          card.rel = 'noopener noreferrer';
+        }
+
+        const metaBadges = [
+          source ? `<span class="source-chip">${source}</span>` : '',
+          isNative
+            ? '<span class="native-badge">Original ES</span>'
+            : '<span class="translated-badge">Traducido</span>',
+        ].join('');
+
+        card.innerHTML = `
+          <div class="story-card__meta">${metaBadges}</div>
+          <div class="story-card__headline">${headline}</div>
+          ${summary ? `<div class="story-card__summary">${summary}</div>` : ''}
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    loadStories();
+  </script>
+</body>
+</html>

@@ -4,6 +4,7 @@ const path = require('path');
 const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
+const { translateStories } = require('./translationService');
 
 const MIN_ARTICLE_CHAR_LENGTH = 2000;
 
@@ -167,6 +168,10 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'components', 'index.html'));
+});
+
+app.get('/language', (_req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'components', 'language.html'));
 });
 
 app.get('/api/firebase-config', (_req, res) => {
@@ -1252,6 +1257,106 @@ app.get('/api/proxy-audio', async (req, res) => {
 
 
 
+
+const SPANISH_SOURCES = [
+  { url: 'https://feeds.bbci.co.uk/mundo/rss.xml', source: 'BBC Mundo', lang: 'es' },
+  { url: 'https://laopinion.com/feed/', source: 'La Opinión', lang: 'es' },
+  { url: 'https://www.democracynow.org/democracynow_spanish.xml', source: 'Democracy Now en Español', lang: 'es' },
+  { url: 'https://cnnespanol.cnn.com/feed/', source: 'CNN en Español', lang: 'es' },
+];
+
+async function fetchSpanishSourceStories({ url, source, lang }) {
+  const { fetchTopNews: _unused, ...rest } = require('./newsService');
+  const https = require('https');
+
+  function fetchXml(targetUrl) {
+    return new Promise((resolve, reject) => {
+      https
+        .get(targetUrl, {
+          headers: {
+            'User-Agent': 'Daily-Spin/1.0 (+https://example.com)',
+            Accept: 'application/rss+xml, application/xml',
+          },
+        })
+        .on('response', (res) => {
+          if (res.statusCode && res.statusCode >= 400) {
+            res.resume();
+            reject(new Error(`Status ${res.statusCode}`));
+            return;
+          }
+          const chunks = [];
+          res.on('data', (chunk) => chunks.push(chunk));
+          res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        })
+        .on('error', reject);
+    });
+  }
+
+  function decodeEntities(text) {
+    return text
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  }
+
+  function extractTag(xml, tag) {
+    const cdata = xml.match(new RegExp(`<${tag}><!\\[CDATA\\[(.*?)\\]\\]><\\/${tag}>`, 'i'));
+    if (cdata) return decodeEntities(cdata[1]);
+    const std = xml.match(new RegExp(`<${tag}>(.*?)<\\/${tag}>`, 'i'));
+    if (std) return decodeEntities(std[1]);
+    return '';
+  }
+
+  function stripHtml(t) {
+    return t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  try {
+    const xml = await fetchXml(url);
+    const items = [];
+    const itemPattern = /<item>([\s\S]*?)<\/item>/gi;
+    let match;
+    while (items.length < 20 && (match = itemPattern.exec(xml)) !== null) {
+      const headline = stripHtml(extractTag(match[1], 'title'));
+      const summary = stripHtml(extractTag(match[1], 'description'));
+      const link = extractTag(match[1], 'link');
+      if (headline) items.push({ headline, summary, link, source, lang });
+    }
+    return items;
+  } catch (err) {
+    console.error(`Unable to fetch Spanish source ${source}:`, err.message);
+    return [];
+  }
+}
+
+app.get('/api/spanish-news', async (req, res) => {
+  try {
+    // Fetch native Spanish sources
+    const spanishResults = await Promise.all(SPANISH_SOURCES.map(fetchSpanishSourceStories));
+    const nativeSpanish = spanishResults.flat().filter((s) => s.headline);
+
+    // Fetch English sources and translate a sample
+    const englishStories = await fetchTopNews(30);
+    const sample = englishStories.filter((s) => s.headline && s.link).slice(0, 15);
+    const translatedEnglish = await translateStories(sample, { batchSize: 5 });
+
+    const all = [
+      ...nativeSpanish,
+      ...translatedEnglish.map((s) => ({ ...s, lang: 'es', originalLang: 'en' })),
+    ];
+
+    const seen = new Set();
+    const unique = all.filter((s) => {
+      const key = s.link || s.headline;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    res.json({ stories: unique });
+  } catch (error) {
+    res.status(502).json({ error: 'Unable to load Spanish news.', details: error.message });
+  }
+});
 
 const port = process.env.PORT || 3000;
 
