@@ -9,6 +9,40 @@ function storyCacheKey(story) {
   return `translations/stories/${sanitizePath(raw)}`;
 }
 
+function splitIntoSentences(text) {
+  // Split on sentence-ending punctuation followed by whitespace or end-of-string
+  const parts = text.match(/[^.!?…]+(?:[.!?…]+(?:\s|$)|$)/g) || [];
+  const sentences = parts.map((s) => s.trim()).filter(Boolean);
+  return sentences.length ? sentences : [text.trim()];
+}
+
+function sentenceCacheKey(sentence, from, to) {
+  // Use a normalized slice of the sentence as the key to stay stable across minor whitespace changes
+  const normalized = sentence.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 180);
+  return `translations/sentences/${from}-${to}/${sanitizePath(normalized)}`;
+}
+
+async function translateArticleBySentence(articleText, { from = 'en', to = 'es' } = {}) {
+  // Split paragraphs, then sentences within each paragraph
+  const paragraphs = articleText.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const allSentences = paragraphs.flatMap((para) => splitIntoSentences(para));
+
+  const results = [];
+  for (const sentence of allSentences) {
+    if (!sentence) continue;
+    const key = sentenceCacheKey(sentence, from, to);
+    const cached = await fbGet(key);
+    if (cached && cached.translated && cached.cached_at && Date.now() - cached.cached_at < CACHE_TTL_MS) {
+      results.push({ original: sentence, translated: cached.translated });
+      continue;
+    }
+    const translated = await translateText(sentence, { from, to });
+    fbSet(key, { translated, cached_at: Date.now() }).catch(() => {});
+    results.push({ original: sentence, translated });
+  }
+  return results;
+}
+
 async function translateText(text, { from = 'en', to = 'es' } = {}) {
   if (!text || !text.trim()) return text;
 
@@ -67,4 +101,4 @@ async function translateStories(stories, { batchSize = 5 } = {}) {
   return results;
 }
 
-module.exports = { translateText, translateStories };
+module.exports = { translateText, translateStories, translateArticleBySentence, splitIntoSentences };
