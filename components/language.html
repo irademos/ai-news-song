@@ -295,6 +295,78 @@
       box-shadow: 0 8px 32px rgba(0,0,0,.55);
       pointer-events: auto;
     }
+
+    /* Selection phrase popup */
+    .phrase-popup {
+      position: fixed;
+      z-index: 10000;
+      background: #1e2738;
+      border: 1px solid rgba(52,211,153,.4);
+      border-radius: 10px;
+      padding: .6rem .75rem;
+      box-shadow: 0 8px 32px rgba(0,0,0,.55);
+      display: flex;
+      flex-direction: column;
+      gap: .45rem;
+      min-width: 160px;
+      max-width: 320px;
+    }
+    .phrase-popup__phrase {
+      font-size: .8rem;
+      color: var(--muted);
+      font-style: italic;
+      word-break: break-word;
+    }
+    .phrase-popup__actions {
+      display: flex;
+      gap: .4rem;
+    }
+    .phrase-popup__btn {
+      flex: 1;
+      padding: .3rem .55rem;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: .82rem;
+      font-weight: 700;
+      transition: background .15s;
+    }
+    .phrase-popup__btn--translate {
+      background: rgba(245,158,11,.2);
+      color: var(--accent);
+      border: 1px solid rgba(245,158,11,.4);
+    }
+    .phrase-popup__btn--translate:hover { background: rgba(245,158,11,.35); }
+    .phrase-popup__btn--google {
+      background: rgba(96,165,250,.15);
+      color: #60a5fa;
+      border: 1px solid rgba(96,165,250,.35);
+    }
+    .phrase-popup__btn--google:hover { background: rgba(96,165,250,.28); }
+    .phrase-popup__result {
+      font-size: .85rem;
+      color: var(--text);
+      line-height: 1.5;
+      padding: .35rem .5rem;
+      border-radius: 6px;
+      background: rgba(148,163,184,.08);
+      border-left: 2px solid rgba(52,211,153,.5);
+      display: none;
+    }
+    .phrase-popup__result.visible { display: block; }
+    .phrase-popup__loading {
+      font-size: .82rem;
+      color: var(--muted);
+      display: none;
+      align-items: center;
+      gap: .4rem;
+    }
+    .phrase-popup__loading.visible { display: flex; }
+    .phrase-popup__loading .spinner {
+      width: 14px; height: 14px;
+      border-width: 2px;
+      margin-bottom: 0;
+    }
     .word-popup__term {
       font-size: .95rem;
       font-weight: 700;
@@ -430,7 +502,7 @@
         <div class="article-meta" id="articleMeta"></div>
         <h2 id="articleHeadline"></h2>
         <div class="article-hint">
-          <span>💡</span> Haz clic en cualquier palabra para ver su traducción al inglés.
+          <span>💡</span> Haz clic en una palabra para traducirla. Arrastra para seleccionar varias palabras y ver opciones de traducción.
         </div>
       </div>
       <div class="article-body" id="articleBody">
@@ -459,6 +531,17 @@
     <div id="wordPopupContent"></div>
   </div>
 
+  <!-- Phrase selection popup -->
+  <div class="phrase-popup" id="phrasePopup" style="display:none;" role="dialog" aria-live="polite">
+    <div class="phrase-popup__phrase" id="phrasePopupText"></div>
+    <div class="phrase-popup__actions">
+      <button class="phrase-popup__btn phrase-popup__btn--translate" id="phraseTranslateBtn">Translate</button>
+      <button class="phrase-popup__btn phrase-popup__btn--google" id="phraseGoogleBtn">Google</button>
+    </div>
+    <div class="phrase-popup__loading" id="phraseLoading"><div class="spinner"></div> Traduciendo…</div>
+    <div class="phrase-popup__result" id="phraseResult"></div>
+  </div>
+
   <script type="module">
     let allStories = [];
     let activeSource = 'all';
@@ -466,6 +549,8 @@
     let activeWordEl = null;
     // Map from sentence index to {original, translated} for translated articles
     let sentenceMap = [];
+    // Cache for multi-word phrase translations
+    const phraseCache = new Map();
 
     const decodeHtml = (str) => {
       const t = document.createElement('textarea');
@@ -617,6 +702,7 @@
       if (!popup.contains(e.target) && !e.target.classList.contains('word')) {
         closeWordPopup();
       }
+      // phrasePopup is closed via mousedown handler above
     });
 
     function closeWordPopup() {
@@ -632,8 +718,9 @@
       const popupW = 240;
       const margin = 8;
 
-      let left = rect.left + window.scrollX;
-      let top = rect.bottom + window.scrollY + margin;
+      // popup is position:fixed — use viewport coords directly (no scroll offset)
+      let left = rect.left;
+      let top = rect.bottom + margin;
 
       // Keep inside viewport horizontally
       if (left + popupW > window.innerWidth - margin) {
@@ -641,12 +728,166 @@
       }
       if (left < margin) left = margin;
 
+      // Flip above if too close to bottom of viewport
+      if (top + 200 > window.innerHeight - margin) {
+        top = rect.top - margin - (popup.offsetHeight || 160);
+        if (top < margin) top = margin;
+      }
+
       popup.style.left = `${left}px`;
       popup.style.top = `${top}px`;
     }
 
+    // ── Phrase selection popup ──────────────────────────────────
+    const phrasePopupEl = document.getElementById('phrasePopup');
+    const phrasePopupText = document.getElementById('phrasePopupText');
+    const phraseLoading = document.getElementById('phraseLoading');
+    const phraseResult = document.getElementById('phraseResult');
+    let lastPhraseRange = null;
+    let isDragging = false;
+
+    // Reposition word popup on scroll so it tracks the anchor word
+    window.addEventListener('scroll', () => {
+      if (popup.style.display !== 'none' && activeWordEl) {
+        positionPopup(activeWordEl);
+      }
+      // Keep phrase popup visible on scroll too
+      if (phrasePopupEl.style.display !== 'none' && lastPhraseRange) {
+        positionPhrasePopup(lastPhraseRange);
+      }
+    }, { passive: true });
+
+    function positionPhrasePopup(range) {
+      const rect = range.getBoundingClientRect();
+      const popupW = 220;
+      const margin = 8;
+      let left = rect.left;
+      let top = rect.bottom + margin;
+      if (left + popupW > window.innerWidth - margin) left = window.innerWidth - popupW - margin;
+      if (left < margin) left = margin;
+      if (top + 180 > window.innerHeight - margin) {
+        top = rect.top - margin - (phrasePopupEl.offsetHeight || 120);
+        if (top < margin) top = margin;
+      }
+      phrasePopupEl.style.left = `${left}px`;
+      phrasePopupEl.style.top = `${top}px`;
+    }
+
+    function closePhrasePopup() {
+      phrasePopupEl.style.display = 'none';
+      lastPhraseRange = null;
+    }
+
+    // Extract text only from .word spans in the selection
+    function getSelectedPhraseFromSelection(sel) {
+      if (!sel || sel.isCollapsed) return '';
+      const range = sel.getRangeAt(0);
+      // Walk all .word nodes in the range
+      const articleBody = document.getElementById('articleBody');
+      if (!articleBody) return '';
+      const words = [...articleBody.querySelectorAll('.word')];
+      const selectedWords = words.filter(w => range.intersectsNode(w));
+      if (selectedWords.length < 2) return '';
+      return selectedWords.map(w => w.textContent.trim()).join(' ');
+    }
+
+    document.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('word')) {
+        isDragging = true;
+      } else if (!phrasePopupEl.contains(e.target)) {
+        closePhrasePopup();
+      }
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+
+      // Give browser a tick to finalize selection
+      setTimeout(() => {
+        const sel = window.getSelection();
+        const phrase = getSelectedPhraseFromSelection(sel);
+        if (!phrase) return;
+
+        const range = sel.getRangeAt(0);
+        lastPhraseRange = range;
+
+        // Close single-word popup if open
+        closeWordPopup();
+        // Clear selection highlight (leave text selected visually)
+        phrasePopupText.textContent = `"${phrase}"`;
+        phraseLoading.classList.remove('visible');
+        phraseResult.classList.remove('visible');
+        phraseResult.textContent = '';
+
+        phrasePopupEl.style.display = 'flex';
+        positionPhrasePopup(range);
+
+        // Wire up buttons for this phrase
+        document.getElementById('phraseTranslateBtn').onclick = () => translatePhrase(phrase);
+        document.getElementById('phraseGoogleBtn').onclick = () => {
+          const q = encodeURIComponent(`"${phrase}" Spanish meaning in English`);
+          window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
+        };
+      }, 10);
+    });
+
+    async function translatePhrase(phrase) {
+      // 1. Check sentence-level cache (sentenceMap)
+      const lowerPhrase = phrase.toLowerCase();
+      const sentenceHit = sentenceMap.find(s => {
+        const trans = (s.translated || '').toLowerCase();
+        return trans.includes(lowerPhrase) || (s.original || '').toLowerCase().includes(lowerPhrase);
+      });
+      if (sentenceHit) {
+        showPhraseTranslation(sentenceHit.original);
+        return;
+      }
+
+      // 2. Check phraseCache
+      if (phraseCache.has(lowerPhrase)) {
+        showPhraseTranslation(phraseCache.get(lowerPhrase));
+        return;
+      }
+
+      // 3. Fetch from MyMemory
+      phraseLoading.classList.add('visible');
+      phraseResult.classList.remove('visible');
+      try {
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(phrase)}&langpair=es|en`);
+        const data = await res.json();
+        const translation = data?.responseData?.translatedText || '';
+        if (translation && translation.toLowerCase() !== phrase.toLowerCase()) {
+          phraseCache.set(lowerPhrase, translation);
+          showPhraseTranslation(translation);
+        } else {
+          showPhraseTranslation('No translation found.');
+        }
+      } catch {
+        showPhraseTranslation('Translation error.');
+      }
+    }
+
+    function showPhraseTranslation(text) {
+      phraseLoading.classList.remove('visible');
+      phraseResult.textContent = text;
+      phraseResult.classList.add('visible');
+      if (lastPhraseRange) positionPhrasePopup(lastPhraseRange);
+    }
+
+    // Close phrase popup on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { closePhrasePopup(); closeWordPopup(); }
+    });
+
     async function onWordClick(e) {
       e.stopPropagation();
+
+      // If user just finished a drag selection (multiple words), let mouseup handle it
+      const sel = window.getSelection();
+      const dragPhrase = getSelectedPhraseFromSelection(sel);
+      if (dragPhrase) return;
+
       const el = e.currentTarget;
       const rawWord = el.textContent.replace(/[^a-zA-ZÀ-ÿñÑ]/g, '').trim();
       if (!rawWord) return;
