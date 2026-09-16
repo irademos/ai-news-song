@@ -50,6 +50,10 @@
       align-items: center;
       gap: .4rem;
       transition: color .2s;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
     }
     .back-link:hover { color: var(--text); }
     .lang-badge {
@@ -213,38 +217,201 @@
     .footer-note a { color: var(--accent); text-decoration: none; }
     .footer-note a:hover { text-decoration: underline; }
 
+    /* ── Article reader ── */
+    #articleView { display: none; }
+    #articleView.visible { display: block; }
+    #listView.hidden { display: none; }
+
+    .article-header {
+      margin-bottom: 1.75rem;
+    }
+    .article-header h2 {
+      font-size: clamp(1.4rem, 3.5vw, 2rem);
+      font-weight: 700;
+      line-height: 1.35;
+      letter-spacing: -.02em;
+      margin-bottom: .75rem;
+    }
+    .article-meta {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .article-hint {
+      font-size: .8rem;
+      color: var(--muted);
+      margin-top: .5rem;
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+    }
+    .article-hint span { opacity: .7; font-size: .95em; }
+
+    .article-body {
+      font-size: 1.05rem;
+      line-height: 1.85;
+      color: var(--text);
+      background: rgba(15,23,42,.6);
+      border: 1px solid rgba(148,163,184,.12);
+      border-radius: 16px;
+      padding: 1.5rem 1.75rem;
+    }
+    .article-body p { margin-bottom: 1rem; }
+    .article-body p:last-child { margin-bottom: 0; }
+
+    /* Clickable word */
+    .word {
+      cursor: pointer;
+      border-radius: 3px;
+      transition: background .15s, color .15s;
+      padding: 0 1px;
+    }
+    .word:hover {
+      background: rgba(245,158,11,.22);
+      color: var(--accent);
+    }
+    .word.active {
+      background: rgba(245,158,11,.35);
+      color: var(--accent);
+    }
+
+    /* Word popup */
+    .word-popup {
+      position: fixed;
+      z-index: 9999;
+      background: #1e2738;
+      border: 1px solid rgba(245,158,11,.4);
+      border-radius: 12px;
+      padding: .85rem 1rem;
+      min-width: 180px;
+      max-width: 280px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.55);
+      pointer-events: auto;
+    }
+    .word-popup__term {
+      font-size: .95rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: .5rem;
+    }
+    .word-popup__meanings {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: .3rem;
+    }
+    .word-popup__meanings li {
+      font-size: .88rem;
+      color: var(--text);
+      padding: .25rem .5rem;
+      border-radius: 6px;
+      background: rgba(148,163,184,.08);
+    }
+    .word-popup__loading {
+      font-size: .85rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .word-popup__loading .spinner {
+      width: 16px; height: 16px;
+      border-width: 2px;
+      margin-bottom: 0;
+    }
+    .word-popup__close {
+      position: absolute;
+      top: .4rem; right: .55rem;
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 0;
+    }
+    .word-popup__close:hover { color: var(--text); }
+    .word-popup__none {
+      font-size: .85rem;
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .open-original-link {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      margin-top: 1.25rem;
+      color: var(--accent);
+      font-size: .85rem;
+      font-weight: 600;
+      text-decoration: none;
+      opacity: .85;
+      transition: opacity .2s;
+    }
+    .open-original-link:hover { opacity: 1; text-decoration: underline; }
+
     @media (max-width: 600px) {
       body { padding: 1.25rem .75rem; }
       .story-card { padding: 1rem 1.1rem; }
+      .article-body { padding: 1rem 1.1rem; }
+      .word-popup { max-width: 240px; }
     }
   </style>
 </head>
 <body>
   <div class="page-shell">
     <nav class="top-nav">
-      <a class="back-link" href="/">← Volver / Back</a>
+      <button class="back-link" id="backBtn">← Volver / Back</button>
       <span class="lang-badge">🌎 En Español</span>
     </nav>
 
-    <header class="page-header">
-      <h1>Noticias en Español</h1>
-      <p>
-        Titulares del mundo en español — fuentes originales en español y noticias en inglés traducidas automáticamente.
-      </p>
-    </header>
+    <!-- List view -->
+    <div id="listView">
+      <header class="page-header">
+        <h1>Noticias en Español</h1>
+        <p>
+          Titulares del mundo en español — fuentes originales en español y noticias en inglés traducidas automáticamente.
+        </p>
+      </header>
 
-    <div class="source-tabs" id="sourceTabs">
-      <button class="source-tab active" data-source="all">Todas las fuentes</button>
-    </div>
+      <div class="source-tabs" id="sourceTabs">
+        <button class="source-tab active" data-source="all">Todas las fuentes</button>
+      </div>
 
-    <div id="storyGrid" class="story-grid">
-      <div class="status-msg">
-        <div class="spinner"></div><br>
-        Cargando noticias…
+      <div id="storyGrid" class="story-grid">
+        <div class="status-msg">
+          <div class="spinner"></div><br>
+          Cargando noticias…
+        </div>
       </div>
     </div>
 
-    <p class="footer-note">
+    <!-- Article reader view -->
+    <div id="articleView">
+      <div class="article-header">
+        <div class="article-meta" id="articleMeta"></div>
+        <h2 id="articleHeadline"></h2>
+        <div class="article-hint">
+          <span>💡</span> Haz clic en cualquier palabra para ver su traducción al inglés.
+        </div>
+      </div>
+      <div class="article-body" id="articleBody">
+        <div class="status-msg">
+          <div class="spinner"></div><br>
+          Cargando artículo…
+        </div>
+      </div>
+      <a class="open-original-link" id="openOriginalLink" href="#" target="_blank" rel="noopener noreferrer">
+        🔗 Ver artículo original
+      </a>
+    </div>
+
+    <p class="footer-note" id="footerNote">
       Fuentes originales: BBC Mundo, La Opinión, CNN en Español, Democracy Now en Español.<br>
       Las noticias marcadas como <strong>Traducido</strong> provienen de fuentes en inglés y fueron traducidas automáticamente con
       <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a>.<br>
@@ -252,9 +419,18 @@
     </p>
   </div>
 
+  <!-- Word popup (singleton, moved around the DOM) -->
+  <div class="word-popup" id="wordPopup" style="display:none;" role="tooltip" aria-live="polite">
+    <button class="word-popup__close" id="wordPopupClose" aria-label="Cerrar">✕</button>
+    <div class="word-popup__term" id="wordPopupTerm"></div>
+    <div id="wordPopupContent"></div>
+  </div>
+
   <script type="module">
     let allStories = [];
     let activeSource = 'all';
+    let currentStory = null;
+    let activeWordEl = null;
 
     const decodeHtml = (str) => {
       const t = document.createElement('textarea');
@@ -262,6 +438,185 @@
       return t.value;
     };
 
+    // ── Views ──────────────────────────────────────────────────
+    function showList() {
+      document.getElementById('listView').classList.remove('hidden');
+      document.getElementById('articleView').classList.remove('visible');
+      document.getElementById('footerNote').style.display = '';
+      document.getElementById('backBtn').textContent = '← Volver / Back';
+      document.getElementById('backBtn').onclick = () => window.location.href = '/';
+      closeWordPopup();
+    }
+
+    function showArticle(story) {
+      currentStory = story;
+      document.getElementById('listView').classList.add('hidden');
+      document.getElementById('articleView').classList.add('visible');
+      document.getElementById('footerNote').style.display = 'none';
+
+      document.getElementById('backBtn').textContent = '← Volver a las noticias';
+      document.getElementById('backBtn').onclick = showList;
+
+      // Meta badges
+      const isNative = story.lang === 'es' && !story.originalLang;
+      const source = decodeHtml(story.source || '');
+      document.getElementById('articleMeta').innerHTML = [
+        source ? `<span class="source-chip">${source}</span>` : '',
+        isNative
+          ? '<span class="native-badge">Original ES</span>'
+          : '<span class="translated-badge">Traducido</span>',
+      ].join('');
+
+      document.getElementById('articleHeadline').textContent = decodeHtml(story.headline || '');
+
+      const originalLink = document.getElementById('openOriginalLink');
+      if (story.link) {
+        originalLink.href = story.link;
+        originalLink.style.display = '';
+      } else {
+        originalLink.style.display = 'none';
+      }
+
+      fetchAndRenderArticle(story);
+    }
+
+    // ── Article fetch & render ──────────────────────────────────
+    async function fetchAndRenderArticle(story) {
+      const body = document.getElementById('articleBody');
+      body.innerHTML = '<div class="status-msg"><div class="spinner"></div><br>Cargando artículo…</div>';
+
+      if (!story.link) {
+        renderArticleText(body, (story.summary || story.headline || ''));
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/spanish-article?url=${encodeURIComponent(story.link)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { content } = await res.json();
+        renderArticleText(body, content || story.summary || '');
+      } catch {
+        // Fall back to summary if article fetch fails
+        renderArticleText(body, story.summary || story.headline || '');
+      }
+    }
+
+    function renderArticleText(container, text) {
+      const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+      container.innerHTML = '';
+      for (const para of paragraphs) {
+        const p = document.createElement('p');
+        tokenizeParagraph(p, para);
+        container.appendChild(p);
+      }
+    }
+
+    // Split paragraph into word spans + punctuation text nodes
+    function tokenizeParagraph(container, text) {
+      // Split on word boundaries keeping delimiters
+      const parts = text.split(/(\s+|["""''«».,;:!?¡¿()\[\]{}\-–—\/\\|@#%^&*+=<>~`])/);
+      for (const part of parts) {
+        if (!part) continue;
+        // A "word" is a token with at least one letter (handles accented chars)
+        if (/\p{L}/u.test(part) && /\S/.test(part)) {
+          const span = document.createElement('span');
+          span.className = 'word';
+          span.textContent = part;
+          span.addEventListener('click', onWordClick);
+          container.appendChild(span);
+        } else {
+          container.appendChild(document.createTextNode(part));
+        }
+      }
+    }
+
+    // ── Word popup ──────────────────────────────────────────────
+    const popup = document.getElementById('wordPopup');
+    const popupTerm = document.getElementById('wordPopupTerm');
+    const popupContent = document.getElementById('wordPopupContent');
+
+    document.getElementById('wordPopupClose').addEventListener('click', closeWordPopup);
+
+    document.addEventListener('click', (e) => {
+      if (!popup.contains(e.target) && !e.target.classList.contains('word')) {
+        closeWordPopup();
+      }
+    });
+
+    function closeWordPopup() {
+      popup.style.display = 'none';
+      if (activeWordEl) {
+        activeWordEl.classList.remove('active');
+        activeWordEl = null;
+      }
+    }
+
+    function positionPopup(referenceEl) {
+      const rect = referenceEl.getBoundingClientRect();
+      const popupW = 240;
+      const margin = 8;
+
+      let left = rect.left + window.scrollX;
+      let top = rect.bottom + window.scrollY + margin;
+
+      // Keep inside viewport horizontally
+      if (left + popupW > window.innerWidth - margin) {
+        left = window.innerWidth - popupW - margin;
+      }
+      if (left < margin) left = margin;
+
+      popup.style.left = `${left}px`;
+      popup.style.top = `${top}px`;
+    }
+
+    async function onWordClick(e) {
+      e.stopPropagation();
+      const el = e.currentTarget;
+      const rawWord = el.textContent.replace(/[^a-zA-ZÀ-ÿñÑ]/g, '').trim();
+      if (!rawWord) return;
+
+      if (activeWordEl === el) {
+        closeWordPopup();
+        return;
+      }
+
+      if (activeWordEl) activeWordEl.classList.remove('active');
+      activeWordEl = el;
+      el.classList.add('active');
+
+      // Show popup in loading state
+      popup.style.display = 'block';
+      positionPopup(el);
+      popupTerm.textContent = rawWord;
+      popupContent.innerHTML = '<div class="word-popup__loading"><div class="spinner"></div> Buscando…</div>';
+
+      try {
+        const res = await fetch(`/api/word-lookup?word=${encodeURIComponent(rawWord)}`);
+        const json = await res.json();
+        const meanings = Array.isArray(json?.meanings) ? json.meanings : [];
+
+        if (meanings.length) {
+          const ul = document.createElement('ul');
+          ul.className = 'word-popup__meanings';
+          for (const m of meanings) {
+            const li = document.createElement('li');
+            li.textContent = m;
+            ul.appendChild(li);
+          }
+          popupContent.innerHTML = '';
+          popupContent.appendChild(ul);
+        } else {
+          popupContent.innerHTML = '<div class="word-popup__none">No se encontró traducción.</div>';
+        }
+      } catch {
+        popupContent.innerHTML = '<div class="word-popup__none">Error al buscar la traducción.</div>';
+      }
+
+      // Reposition in case popup height changed
+      positionPopup(el);
+    }
+
+    // ── News list ────────────────────────────────────────────────
     async function loadStories() {
       const grid = document.getElementById('storyGrid');
       grid.innerHTML = '<div class="status-msg"><div class="spinner"></div><br>Cargando noticias…</div>';
@@ -313,13 +668,10 @@
         const source = decodeHtml(story.source || '');
         const isNative = story.lang === 'es' && !story.originalLang;
 
-        const card = document.createElement('a');
+        const card = document.createElement('div');
         card.className = 'story-card';
-        card.href = story.link || '#';
-        if (story.link) {
-          card.target = '_blank';
-          card.rel = 'noopener noreferrer';
-        }
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
 
         const metaBadges = [
           source ? `<span class="source-chip">${source}</span>` : '',
@@ -333,10 +685,15 @@
           <div class="story-card__headline">${headline}</div>
           ${summary ? `<div class="story-card__summary">${summary}</div>` : ''}
         `;
+
+        card.addEventListener('click', () => showArticle(story));
+        card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') showArticle(story); });
         grid.appendChild(card);
       });
     }
 
+    // Init
+    document.getElementById('backBtn').onclick = () => window.location.href = '/';
     loadStories();
   </script>
 </body>
