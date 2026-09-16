@@ -261,6 +261,11 @@
     .article-body p { margin-bottom: 1rem; }
     .article-body p:last-child { margin-bottom: 0; }
 
+    /* Sentence wrapper */
+    .sentence {
+      display: inline;
+    }
+
     /* Clickable word */
     .word {
       cursor: pointer;
@@ -339,6 +344,34 @@
       font-size: .85rem;
       color: var(--muted);
       font-style: italic;
+    }
+    .word-popup__sentence-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .3rem;
+      margin-top: .6rem;
+      background: rgba(245,158,11,.15);
+      border: 1px solid rgba(245,158,11,.35);
+      border-radius: 6px;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: .8rem;
+      font-weight: 600;
+      padding: .25rem .6rem;
+      transition: background .15s;
+      width: 100%;
+      justify-content: center;
+    }
+    .word-popup__sentence-btn:hover { background: rgba(245,158,11,.28); }
+    .word-popup__sentence {
+      margin-top: .5rem;
+      font-size: .82rem;
+      color: var(--text);
+      line-height: 1.5;
+      padding: .4rem .55rem;
+      border-radius: 6px;
+      background: rgba(148,163,184,.08);
+      border-left: 2px solid rgba(245,158,11,.5);
     }
 
     .open-original-link {
@@ -431,6 +464,8 @@
     let activeSource = 'all';
     let currentStory = null;
     let activeWordEl = null;
+    // Map from sentence index to {original, translated} for translated articles
+    let sentenceMap = [];
 
     const decodeHtml = (str) => {
       const t = document.createElement('textarea');
@@ -446,6 +481,7 @@
       document.getElementById('backBtn').textContent = '← Volver / Back';
       document.getElementById('backBtn').onclick = () => window.location.href = '/';
       closeWordPopup();
+      sentenceMap = [];
     }
 
     function showArticle(story) {
@@ -484,20 +520,56 @@
     async function fetchAndRenderArticle(story) {
       const body = document.getElementById('articleBody');
       body.innerHTML = '<div class="status-msg"><div class="spinner"></div><br>Cargando artículo…</div>';
+      sentenceMap = [];
 
       if (!story.link) {
         renderArticleText(body, (story.summary || story.headline || ''));
         return;
       }
 
+      const needsTranslation = story.originalLang === 'en';
+      const apiUrl = `/api/spanish-article?url=${encodeURIComponent(story.link)}${needsTranslation ? '&translate=true' : ''}`;
+
       try {
-        const res = await fetch(`/api/spanish-article?url=${encodeURIComponent(story.link)}`);
+        const res = await fetch(apiUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const { content } = await res.json();
-        renderArticleText(body, content || story.summary || '');
+        const data = await res.json();
+
+        if (needsTranslation && Array.isArray(data.sentences) && data.sentences.length) {
+          sentenceMap = data.sentences; // [{original, translated}]
+          renderTranslatedArticle(body, data.sentences);
+        } else {
+          renderArticleText(body, data.content || story.summary || '');
+        }
       } catch {
         // Fall back to summary if article fetch fails
         renderArticleText(body, story.summary || story.headline || '');
+      }
+    }
+
+    // Render an article where each sentence is indexed for sentence-translation lookup
+    function renderTranslatedArticle(container, sentences) {
+      container.innerHTML = '';
+      // Re-group sentences into paragraphs by tracking paragraph breaks.
+      // The backend preserves paragraph structure within allSentences; we approximate
+      // paragraph breaks by starting a new <p> whenever a sentence ends a "paragraph"
+      // boundary (every ~4–6 sentences or when we know from the original content).
+      // Since we lost paragraph info, group every 4 sentences as a paragraph.
+      const PARA_SIZE = 4;
+      for (let i = 0; i < sentences.length; i += PARA_SIZE) {
+        const p = document.createElement('p');
+        const chunk = sentences.slice(i, i + PARA_SIZE);
+        for (let j = 0; j < chunk.length; j++) {
+          const idx = i + j;
+          const sentenceEl = document.createElement('span');
+          sentenceEl.className = 'sentence';
+          sentenceEl.dataset.sentenceIdx = idx;
+          tokenizeParagraph(sentenceEl, chunk[j].translated, idx);
+          p.appendChild(sentenceEl);
+          // Add a space between sentences
+          if (j < chunk.length - 1) p.appendChild(document.createTextNode(' '));
+        }
+        container.appendChild(p);
       }
     }
 
@@ -506,13 +578,14 @@
       container.innerHTML = '';
       for (const para of paragraphs) {
         const p = document.createElement('p');
-        tokenizeParagraph(p, para);
+        tokenizeParagraph(p, para, null);
         container.appendChild(p);
       }
     }
 
     // Split paragraph into word spans + punctuation text nodes
-    function tokenizeParagraph(container, text) {
+    // sentenceIdx: if non-null, tag each word span with data-sentence-idx
+    function tokenizeParagraph(container, text, sentenceIdx) {
       // Split on word boundaries keeping delimiters
       const parts = text.split(/(\s+|["""''«».,;:!?¡¿()\[\]{}\-–—\/\\|@#%^&*+=<>~`])/);
       for (const part of parts) {
@@ -522,6 +595,9 @@
           const span = document.createElement('span');
           span.className = 'word';
           span.textContent = part;
+          if (sentenceIdx !== null && sentenceIdx !== undefined) {
+            span.dataset.sentenceIdx = sentenceIdx;
+          }
           span.addEventListener('click', onWordClick);
           container.appendChild(span);
         } else {
@@ -590,10 +666,16 @@
       popupTerm.textContent = rawWord;
       popupContent.innerHTML = '<div class="word-popup__loading"><div class="spinner"></div> Buscando…</div>';
 
+      // Check if this word belongs to a sentence with a cached translation
+      const sentenceIdx = el.dataset.sentenceIdx != null ? Number(el.dataset.sentenceIdx) : null;
+      const sentenceEntry = (sentenceIdx !== null && sentenceMap[sentenceIdx]) ? sentenceMap[sentenceIdx] : null;
+
       try {
         const res = await fetch(`/api/word-lookup?word=${encodeURIComponent(rawWord)}`);
         const json = await res.json();
         const meanings = Array.isArray(json?.meanings) ? json.meanings : [];
+
+        popupContent.innerHTML = '';
 
         if (meanings.length) {
           const ul = document.createElement('ul');
@@ -603,10 +685,39 @@
             li.textContent = m;
             ul.appendChild(li);
           }
-          popupContent.innerHTML = '';
           popupContent.appendChild(ul);
         } else {
-          popupContent.innerHTML = '<div class="word-popup__none">No se encontró traducción.</div>';
+          const none = document.createElement('div');
+          none.className = 'word-popup__none';
+          none.textContent = 'No se encontró traducción.';
+          popupContent.appendChild(none);
+        }
+
+        // Add sentence translation button if available
+        if (sentenceEntry) {
+          const btn = document.createElement('button');
+          btn.className = 'word-popup__sentence-btn';
+          btn.innerHTML = '＋ Ver oración completa en inglés';
+          let expanded = false;
+          let sentenceDiv = null;
+          btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (expanded && sentenceDiv) {
+              sentenceDiv.remove();
+              sentenceDiv = null;
+              btn.innerHTML = '＋ Ver oración completa en inglés';
+              expanded = false;
+            } else {
+              sentenceDiv = document.createElement('div');
+              sentenceDiv.className = 'word-popup__sentence';
+              sentenceDiv.textContent = sentenceEntry.original;
+              btn.insertAdjacentElement('afterend', sentenceDiv);
+              btn.innerHTML = '− Ocultar oración';
+              expanded = true;
+            }
+            positionPopup(activeWordEl);
+          });
+          popupContent.appendChild(btn);
         }
       } catch {
         popupContent.innerHTML = '<div class="word-popup__none">Error al buscar la traducción.</div>';

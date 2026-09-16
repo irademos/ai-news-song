@@ -4,7 +4,7 @@ const path = require('path');
 const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
-const { translateStories } = require('./translationService');
+const { translateStories, translateArticleBySentence } = require('./translationService');
 const { lookupWord } = require('./wordService');
 const { fbGet, fbSet, sanitizePath } = require('./firebaseService');
 
@@ -1275,14 +1275,25 @@ app.get('/api/word-lookup', async (req, res) => {
 
 const ARTICLE_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-// GET /api/spanish-article?url=... — fetches and caches article content
+// GET /api/spanish-article?url=...&translate=true — fetches and caches article content.
+// When translate=true, also returns per-sentence translations (en→es) with individual sentence caching.
 app.get('/api/spanish-article', async (req, res) => {
   const url = typeof req.query.url === 'string' ? req.query.url.trim() : '';
   if (!url) return res.status(400).json({ error: 'url parameter is required.' });
 
+  const wantTranslation = req.query.translate === 'true';
+
   const key = `article_cache/${sanitizePath(url)}`;
   const cached = await fbGet(key);
   if (cached && cached.content && cached.cached_at && Date.now() - cached.cached_at < ARTICLE_CACHE_TTL_MS) {
+    if (wantTranslation) {
+      try {
+        const sentences = await translateArticleBySentence(cached.content);
+        return res.json({ content: cached.content, sentences, fromCache: true });
+      } catch {
+        return res.json({ content: cached.content, sentences: [], fromCache: true });
+      }
+    }
     return res.json({ content: cached.content, fromCache: true });
   }
 
@@ -1290,6 +1301,15 @@ app.get('/api/spanish-article', async (req, res) => {
     const content = await fetchArticleContent(url);
     if (!content) return res.status(404).json({ error: 'No readable content found.' });
     fbSet(key, { content, cached_at: Date.now() }).catch(() => {});
+
+    if (wantTranslation) {
+      try {
+        const sentences = await translateArticleBySentence(content);
+        return res.json({ content, sentences, fromCache: false });
+      } catch {
+        return res.json({ content, sentences: [], fromCache: false });
+      }
+    }
     res.json({ content, fromCache: false });
   } catch (error) {
     res.status(502).json({ error: 'Unable to fetch article.', details: error.message });
