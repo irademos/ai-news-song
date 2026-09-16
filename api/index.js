@@ -5,6 +5,8 @@ const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
 const { translateStories } = require('./translationService');
+const { lookupWord } = require('./wordService');
+const { fbGet, fbSet, sanitizePath } = require('./firebaseService');
 
 const MIN_ARTICLE_CHAR_LENGTH = 2000;
 
@@ -1257,6 +1259,42 @@ app.get('/api/proxy-audio', async (req, res) => {
 
 
 
+
+// GET /api/word-lookup?word=casa — returns English meanings for a Spanish word (cached)
+app.get('/api/word-lookup', async (req, res) => {
+  const word = typeof req.query.word === 'string' ? req.query.word.trim() : '';
+  if (!word) return res.status(400).json({ error: 'word parameter is required.' });
+
+  try {
+    const meanings = await lookupWord(word);
+    res.json({ word, meanings });
+  } catch (error) {
+    res.status(502).json({ error: 'Word lookup failed.', details: error.message });
+  }
+});
+
+const ARTICLE_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+// GET /api/spanish-article?url=... — fetches and caches article content
+app.get('/api/spanish-article', async (req, res) => {
+  const url = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+  if (!url) return res.status(400).json({ error: 'url parameter is required.' });
+
+  const key = `article_cache/${sanitizePath(url)}`;
+  const cached = await fbGet(key);
+  if (cached && cached.content && cached.cached_at && Date.now() - cached.cached_at < ARTICLE_CACHE_TTL_MS) {
+    return res.json({ content: cached.content, fromCache: true });
+  }
+
+  try {
+    const content = await fetchArticleContent(url);
+    if (!content) return res.status(404).json({ error: 'No readable content found.' });
+    fbSet(key, { content, cached_at: Date.now() }).catch(() => {});
+    res.json({ content, fromCache: false });
+  } catch (error) {
+    res.status(502).json({ error: 'Unable to fetch article.', details: error.message });
+  }
+});
 
 const SPANISH_SOURCES = [
   { url: 'https://feeds.bbci.co.uk/mundo/rss.xml', source: 'BBC Mundo', lang: 'es' },
