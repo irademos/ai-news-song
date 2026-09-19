@@ -1341,9 +1341,15 @@
       document.querySelectorAll('.speed-btn').forEach(b => {
         b.classList.toggle('active', parseFloat(b.dataset.rate) === rate);
       });
-      // For browser TTS: only update the rate variable; do NOT cancel/restart
-      // mid-speech — it's unreliable in Chrome and sounds like a glitch.
-      // The new rate takes effect on the next play or resume.
+      if (ttsUsesBrowser && ttsState === 'playing') {
+        // Capture position then restart at new rate
+        ttsLastCharIndex = estimateBrowserTtsCharIndex();
+        ttsStartTime = 0;
+        clearChromeTtsKeepalive();
+        doSpeakWithBrowser(ttsFullText, ttsLastCharIndex);
+        // ttsState stays 'playing' — the bail-out check in setTimeout passes
+      }
+      // if paused, new rate applies on next resume
     }
 
     function doSpeakWithBrowser(text, startFrom) {
@@ -1373,8 +1379,7 @@
           if (e.name === 'word') ttsLastCharIndex = startFrom + e.charIndex;
         };
         utter.onstart = () => {
-          ttsStartTime = Date.now();
-          ttsStartCharIndex = startFrom;
+          ttsStartTime = Date.now(); // refine with actual start time
           ttsState = 'playing';
           setTtsStatus('Reproduciendo… (voz del navegador)');
           updateAudioBarUI();
@@ -1414,6 +1419,9 @@
 
         ttsUsesBrowser = true;
         ttsSpeechUtterance = utter;
+        // Set start time here so position estimation works even if onstart is delayed
+        ttsStartTime = Date.now();
+        ttsStartCharIndex = startFrom;
         window.speechSynthesis.speak(utter);
       }, 120);
     }
