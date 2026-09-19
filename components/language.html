@@ -460,6 +460,103 @@
     }
     .open-original-link:hover { opacity: 1; text-decoration: underline; }
 
+    /* ── Audio playback bar ── */
+    .article-audio-bar {
+      display: none;
+      align-items: center;
+      gap: .75rem;
+      padding: .85rem 1.1rem;
+      background: rgba(13,17,23,.92);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 18px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 8px 32px rgba(0,0,0,.45);
+      /* always fixed/floating — not inside the content flow */
+      position: fixed;
+      z-index: 200;
+    }
+    .article-audio-bar.visible {
+      display: flex;
+    }
+
+    /* Desktop: floating pill at bottom-right */
+    @media (min-width: 601px) {
+      .article-audio-bar {
+        bottom: 2rem;
+        right: 2rem;
+        width: min(360px, calc(100vw - 4rem));
+      }
+    }
+
+    /* Mobile: full-width bar pinned to bottom edge */
+    @media (max-width: 600px) {
+      .article-audio-bar {
+        left: 0; right: 0; bottom: 0;
+        border-radius: 18px 18px 0 0;
+        border-left: none; border-right: none; border-bottom: none;
+        padding: .9rem max(1rem, env(safe-area-inset-left))
+                 max(.9rem, env(safe-area-inset-bottom))
+                 max(1rem, env(safe-area-inset-right));
+      }
+      /* push article content up so bar doesn't overlap */
+      #articleView.visible {
+        padding-bottom: 5.5rem;
+      }
+    }
+
+    .audio-play-btn {
+      flex: 0 0 auto;
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      border: none;
+      background: var(--accent);
+      color: #0b0f16;
+      font-size: 1.15rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform .15s, box-shadow .2s;
+    }
+    .audio-play-btn:hover:not(:disabled) {
+      transform: scale(1.07);
+      box-shadow: 0 6px 20px rgba(245,158,11,.4);
+    }
+    .audio-play-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .audio-bar-info {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .audio-bar-label {
+      font-size: .82rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: .07em;
+    }
+    .audio-bar-status {
+      font-size: .82rem;
+      color: var(--muted);
+      margin-top: .15rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .audio-stop-btn {
+      flex: 0 0 auto;
+      background: none;
+      border: 1px solid rgba(148,163,184,.3);
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: .8rem;
+      font-weight: 600;
+      padding: .35rem .7rem;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+    .audio-stop-btn:hover { background: rgba(148,163,184,.15); color: var(--text); }
+    .audio-stop-btn:disabled { opacity: .45; cursor: not-allowed; }
+
     @media (max-width: 600px) {
       body { padding: 1.25rem .75rem; }
       .story-card { padding: 1rem 1.1rem; }
@@ -511,6 +608,8 @@
           Cargando artículo…
         </div>
       </div>
+      <audio id="ttsAudioEl" style="display:none" preload="none"></audio>
+
       <a class="open-original-link" id="openOriginalLink" href="#" target="_blank" rel="noopener noreferrer">
         🔗 Ver artículo original
       </a>
@@ -522,6 +621,16 @@
       <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a>.<br>
       <a href="/">← Volver a Daily Spin</a>
     </p>
+  </div>
+
+  <!-- Audio playback bar (fixed/floating, outside page flow) -->
+  <div class="article-audio-bar" id="articleAudioBar" role="region" aria-label="Reproducción de audio">
+    <button class="audio-play-btn" id="audioPlayBtn" aria-label="Reproducir artículo en voz alta" disabled>▶</button>
+    <div class="audio-bar-info">
+      <div class="audio-bar-label">🔊 Escuchar artículo</div>
+      <div class="audio-bar-status" id="audioBarStatus">Cargando artículo…</div>
+    </div>
+    <button class="audio-stop-btn" id="audioStopBtn" disabled>Detener</button>
   </div>
 
   <!-- Word popup (singleton, moved around the DOM) -->
@@ -542,6 +651,7 @@
     <div class="phrase-popup__result" id="phraseResult"></div>
   </div>
 
+  <script src="https://js.puter.com/v2/"></script>
   <script type="module">
     let allStories = [];
     let activeSource = 'all';
@@ -560,6 +670,8 @@
 
     // ── Views ──────────────────────────────────────────────────
     function showList() {
+      stopTts();
+      enableAudioBar(false);
       document.getElementById('listView').classList.remove('hidden');
       document.getElementById('articleView').classList.remove('visible');
       document.getElementById('footerNote').style.display = '';
@@ -571,6 +683,8 @@
 
     function showArticle(story) {
       currentStory = story;
+      stopTts();
+      enableAudioBar(false);
       document.getElementById('listView').classList.add('hidden');
       document.getElementById('articleView').classList.add('visible');
       document.getElementById('footerNote').style.display = 'none';
@@ -609,6 +723,7 @@
 
       if (!story.link) {
         renderArticleText(body, (story.summary || story.headline || ''));
+        enableAudioBar(true);
         return;
       }
 
@@ -630,6 +745,7 @@
         // Fall back to summary if article fetch fails
         renderArticleText(body, story.summary || story.headline || '');
       }
+      enableAudioBar(true);
     }
 
     // Render an article where each sentence is indexed for sentence-translation lookup
@@ -1042,6 +1158,241 @@
         card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') showArticle(story); });
         grid.appendChild(card);
       });
+    }
+
+    // ── Article TTS ──────────────────────────────────────────────
+    let ttsState = 'idle'; // 'idle' | 'loading' | 'playing' | 'paused'
+    let ttsAudio = null;      // HTMLAudioElement or puter audio object
+    let ttsSpeechUtterance = null;
+    let ttsUsesBrowser = false;
+
+    const audioPlayBtn  = document.getElementById('audioPlayBtn');
+    const audioStopBtn  = document.getElementById('audioStopBtn');
+    const audioBarStatus = document.getElementById('audioBarStatus');
+
+    function getArticleText() {
+      const body = document.getElementById('articleBody');
+      if (!body) return '';
+      return (body.innerText || body.textContent || '').trim().replace(/\s+/g, ' ');
+    }
+
+    function setTtsStatus(msg) {
+      if (audioBarStatus) audioBarStatus.textContent = msg;
+    }
+
+    function updateAudioBarUI() {
+      if (!audioPlayBtn || !audioStopBtn) return;
+      if (ttsState === 'idle') {
+        audioPlayBtn.textContent = '▶';
+        audioPlayBtn.setAttribute('aria-label', 'Reproducir artículo en voz alta');
+        audioStopBtn.disabled = true;
+      } else if (ttsState === 'loading') {
+        audioPlayBtn.textContent = '…';
+        audioStopBtn.disabled = false;
+      } else if (ttsState === 'playing') {
+        audioPlayBtn.textContent = '⏸';
+        audioPlayBtn.setAttribute('aria-label', 'Pausar');
+        audioStopBtn.disabled = false;
+      } else if (ttsState === 'paused') {
+        audioPlayBtn.textContent = '▶';
+        audioPlayBtn.setAttribute('aria-label', 'Reanudar');
+        audioStopBtn.disabled = false;
+      }
+    }
+
+    function stopTts() {
+      ttsState = 'idle';
+      if (ttsUsesBrowser) {
+        try { window.speechSynthesis.cancel(); } catch {}
+        ttsUsesBrowser = false;
+        ttsSpeechUtterance = null;
+      }
+      const audioEl = document.getElementById('ttsAudioEl');
+      if (audioEl) { try { audioEl.pause(); audioEl.src = ''; } catch {} }
+      ttsAudio = null;
+      setTtsStatus('Listo para escuchar');
+      updateAudioBarUI();
+    }
+
+    function pauseTts() {
+      if (ttsState !== 'playing') return;
+      ttsState = 'paused';
+      if (ttsUsesBrowser) {
+        try { window.speechSynthesis.pause(); } catch {}
+      } else {
+        const audioEl = document.getElementById('ttsAudioEl');
+        try { audioEl?.pause(); } catch {}
+      }
+      setTtsStatus('En pausa');
+      updateAudioBarUI();
+    }
+
+    function resumeTts() {
+      if (ttsState !== 'paused') return;
+      ttsState = 'playing';
+      if (ttsUsesBrowser) {
+        try { window.speechSynthesis.resume(); } catch {}
+      } else {
+        const audioEl = document.getElementById('ttsAudioEl');
+        audioEl?.play().catch(() => {});
+      }
+      setTtsStatus('Reproduciendo…');
+      updateAudioBarUI();
+    }
+
+    function doSpeakWithBrowser(text) {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = 'es-ES';
+      utter.rate = 0.95;
+
+      const voices = window.speechSynthesis.getVoices();
+      const esVoice = voices.find(v => v.lang.startsWith('es')) || null;
+      if (esVoice) utter.voice = esVoice;
+
+      utter.onstart = () => {
+        ttsState = 'playing';
+        setTtsStatus('Reproduciendo… (voz del navegador)');
+        updateAudioBarUI();
+      };
+      utter.onend = () => {
+        ttsState = 'idle';
+        ttsUsesBrowser = false;
+        ttsSpeechUtterance = null;
+        setTtsStatus('Listo para escuchar');
+        updateAudioBarUI();
+      };
+      utter.onerror = (e) => {
+        // 'interrupted' fires when cancel() is called — not a real error
+        if (e.error === 'interrupted') return;
+        ttsState = 'idle';
+        ttsUsesBrowser = false;
+        ttsSpeechUtterance = null;
+        setTtsStatus('Sin voz disponible. Intenta desde un navegador con voz en español.');
+        updateAudioBarUI();
+      };
+
+      ttsUsesBrowser = true;
+      ttsSpeechUtterance = utter;
+      window.speechSynthesis.speak(utter);
+    }
+
+    function playWithBrowserTts(text) {
+      if (!('speechSynthesis' in window)) {
+        setTtsStatus('TTS no disponible en este navegador.');
+        ttsState = 'idle';
+        updateAudioBarUI();
+        return;
+      }
+      ttsState = 'playing';
+      setTtsStatus('Preparando voz del navegador…');
+      updateAudioBarUI();
+
+      // Voices may not be loaded yet on first call
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length) {
+        doSpeakWithBrowser(text);
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => {
+          window.speechSynthesis.onvoiceschanged = null;
+          doSpeakWithBrowser(text);
+        };
+        // Fallback if onvoiceschanged never fires
+        setTimeout(() => doSpeakWithBrowser(text), 500);
+      }
+    }
+
+    async function playArticleAudio() {
+      const rawText = getArticleText();
+      if (!rawText) { setTtsStatus('No hay texto para leer.'); return; }
+      // OpenAI TTS has a ~4096 char limit; truncate gracefully at a sentence boundary
+      const MAX_CHARS = 3800;
+      const text = rawText.length > MAX_CHARS
+        ? rawText.slice(0, MAX_CHARS).replace(/[^.!?]*$/, '').trim() || rawText.slice(0, MAX_CHARS)
+        : rawText;
+
+      ttsState = 'loading';
+      setTtsStatus('Preparando audio…');
+      updateAudioBarUI();
+
+      const audioEl = document.getElementById('ttsAudioEl');
+
+      try {
+        const puterAudio = await puter.ai.txt2speech(text, {
+          provider: 'openai',
+          model: 'gpt-4o-mini-tts',
+          voice: 'alloy',
+          response_format: 'mp3',
+          instructions: 'Speak clearly in Spanish at a natural pace.',
+        });
+
+        const src = puterAudio?.src || '';
+        if (!src) throw new Error('No audio src returned');
+
+        if (!audioEl) throw new Error('No audio element');
+
+        ttsUsesBrowser = false;
+
+        const onEnded = () => {
+          ttsState = 'idle';
+          ttsAudio = null;
+          setTtsStatus('Listo para escuchar');
+          updateAudioBarUI();
+          audioEl.removeEventListener('ended', onEnded);
+          audioEl.removeEventListener('error', onError);
+        };
+        const onError = () => {
+          ttsState = 'idle';
+          ttsAudio = null;
+          setTtsStatus('Error de audio. Intenta de nuevo.');
+          updateAudioBarUI();
+          audioEl.removeEventListener('ended', onEnded);
+          audioEl.removeEventListener('error', onError);
+        };
+
+        audioEl.addEventListener('ended', onEnded);
+        audioEl.addEventListener('error', onError);
+        audioEl.src = src;
+        audioEl.load();
+        ttsAudio = audioEl;
+        ttsState = 'playing';
+        setTtsStatus('Reproduciendo…');
+        updateAudioBarUI();
+        audioEl.play().catch(() => {
+          audioEl.removeEventListener('ended', onEnded);
+          audioEl.removeEventListener('error', onError);
+          ttsState = 'idle';
+          ttsAudio = null;
+          setTtsStatus('Error al iniciar el audio.');
+          updateAudioBarUI();
+        });
+      } catch (err) {
+        console.warn('Puter TTS failed, falling back to browser TTS:', err);
+        ttsAudio = null;
+        ttsUsesBrowser = false;
+        playWithBrowserTts(text);
+      }
+    }
+
+    audioPlayBtn?.addEventListener('click', () => {
+      if (ttsState === 'idle') {
+        playArticleAudio();
+      } else if (ttsState === 'playing') {
+        pauseTts();
+      } else if (ttsState === 'paused') {
+        resumeTts();
+      }
+    });
+
+    audioStopBtn?.addEventListener('click', stopTts);
+
+    function enableAudioBar(ready) {
+      const bar = document.getElementById('articleAudioBar');
+      if (bar) bar.classList.toggle('visible', !!ready);
+      if (!audioPlayBtn) return;
+      audioPlayBtn.disabled = !ready;
+      setTtsStatus(ready ? 'Listo para escuchar' : 'Cargando artículo…');
+      if (ready) updateAudioBarUI();
     }
 
     // Init
