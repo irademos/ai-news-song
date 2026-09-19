@@ -1209,6 +1209,7 @@
     let ttsRate = 1.0;
     let ttsFullText = '';
     let ttsLastCharIndex = 0;
+    let chromeTtsKeepalive = null;
 
     const audioPlayBtn  = document.getElementById('audioPlayBtn');
     const audioStopBtn  = document.getElementById('audioStopBtn');
@@ -1247,8 +1248,13 @@
       if (audioBack10Btn) audioBack10Btn.disabled = !active;
     }
 
+    function clearChromeTtsKeepalive() {
+      if (chromeTtsKeepalive) { clearInterval(chromeTtsKeepalive); chromeTtsKeepalive = null; }
+    }
+
     function stopTts() {
       ttsState = 'idle';
+      clearChromeTtsKeepalive();
       if (ttsUsesBrowser) {
         try { window.speechSynthesis.cancel(); } catch {}
         ttsUsesBrowser = false;
@@ -1265,6 +1271,7 @@
     function pauseTts() {
       if (ttsState !== 'playing') return;
       ttsState = 'paused';
+      clearChromeTtsKeepalive();
       if (ttsUsesBrowser) {
         // speechSynthesis.pause() is unreliable in Chrome — cancel instead
         // and track charIndex via onboundary so we can resume from position
@@ -1279,10 +1286,12 @@
 
     function resumeTts() {
       if (ttsState !== 'paused') return;
-      ttsState = 'playing';
       if (ttsUsesBrowser) {
+        ttsState = 'loading';
+        updateAudioBarUI();
         doSpeakWithBrowser(ttsFullText, ttsLastCharIndex);
       } else {
+        ttsState = 'playing';
         const audioEl = document.getElementById('ttsAudioEl');
         audioEl?.play().catch(() => {});
         setTtsStatus('Reproduciendo…');
@@ -1297,8 +1306,11 @@
         const charsBack = Math.round(12 * ttsRate * 10);
         ttsLastCharIndex = Math.max(0, ttsLastCharIndex - charsBack);
         const wasPlaying = ttsState === 'playing';
+        clearChromeTtsKeepalive();
         try { window.speechSynthesis.cancel(); } catch {}
         if (wasPlaying) {
+          ttsState = 'loading';
+          updateAudioBarUI();
           doSpeakWithBrowser(ttsFullText, ttsLastCharIndex);
         }
         // If paused, resume will start from the updated ttsLastCharIndex
@@ -1315,8 +1327,11 @@
       });
       if (ttsUsesBrowser && (ttsState === 'playing' || ttsState === 'paused')) {
         const wasPlaying = ttsState === 'playing';
+        clearChromeTtsKeepalive();
         try { window.speechSynthesis.cancel(); } catch {}
         if (wasPlaying) {
+          ttsState = 'loading';
+          updateAudioBarUI();
           doSpeakWithBrowser(ttsFullText, ttsLastCharIndex);
         }
         // if paused, rate will be used when resumed
@@ -1326,47 +1341,66 @@
     function doSpeakWithBrowser(text, startFrom) {
       startFrom = startFrom || 0;
       const textToSpeak = startFrom > 0 ? text.slice(startFrom) : text;
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(textToSpeak);
-      utter.lang = 'es-ES';
-      utter.rate = ttsRate;
 
-      const voices = window.speechSynthesis.getVoices();
-      const esVoice = voices.find(v => v.lang.startsWith('es')) || null;
-      if (esVoice) utter.voice = esVoice;
+      // Cancel any existing synthesis and give Chrome ~120ms to process it
+      // before starting a new utterance — rapid cancel+speak cycles can freeze Chrome
+      clearChromeTtsKeepalive();
+      try { window.speechSynthesis.cancel(); } catch {}
 
-      utter.onboundary = (e) => {
-        if (e.name === 'word') {
-          ttsLastCharIndex = startFrom + e.charIndex;
-        }
-      };
-      utter.onstart = () => {
-        ttsState = 'playing';
-        setTtsStatus('Reproduciendo… (voz del navegador)');
-        updateAudioBarUI();
-      };
-      utter.onend = () => {
-        ttsState = 'idle';
-        ttsUsesBrowser = false;
-        ttsSpeechUtterance = null;
-        ttsLastCharIndex = 0;
-        setTtsStatus('Listo para escuchar');
-        updateAudioBarUI();
-      };
-      utter.onerror = (e) => {
-        // 'interrupted' fires when cancel() is called — not a real error
-        if (e.error === 'interrupted') return;
-        ttsState = 'idle';
-        ttsUsesBrowser = false;
-        ttsSpeechUtterance = null;
-        ttsLastCharIndex = 0;
-        setTtsStatus('Sin voz disponible. Intenta desde un navegador con voz en español.');
-        updateAudioBarUI();
-      };
+      setTimeout(() => {
+        // Bail if state changed while waiting (e.g. user hit stop)
+        if (ttsState !== 'playing' && ttsState !== 'loading') return;
 
-      ttsUsesBrowser = true;
-      ttsSpeechUtterance = utter;
-      window.speechSynthesis.speak(utter);
+        const utter = new SpeechSynthesisUtterance(textToSpeak);
+        utter.lang = 'es-ES';
+        utter.rate = ttsRate;
+
+        const voices = window.speechSynthesis.getVoices();
+        const esVoice = voices.find(v => v.lang.startsWith('es')) || null;
+        if (esVoice) utter.voice = esVoice;
+
+        utter.onboundary = (e) => {
+          if (e.name === 'word') ttsLastCharIndex = startFrom + e.charIndex;
+        };
+        utter.onstart = () => {
+          ttsState = 'playing';
+          setTtsStatus('Reproduciendo… (voz del navegador)');
+          updateAudioBarUI();
+          // Chrome can freeze mid-utterance; periodic pause+resume keeps it alive
+          chromeTtsKeepalive = setInterval(() => {
+            if (ttsState === 'playing' && ttsUsesBrowser) {
+              window.speechSynthesis.pause();
+              window.speechSynthesis.resume();
+            } else {
+              clearChromeTtsKeepalive();
+            }
+          }, 10000);
+        };
+        utter.onend = () => {
+          clearChromeTtsKeepalive();
+          ttsState = 'idle';
+          ttsUsesBrowser = false;
+          ttsSpeechUtterance = null;
+          ttsLastCharIndex = 0;
+          setTtsStatus('Listo para escuchar');
+          updateAudioBarUI();
+        };
+        utter.onerror = (e) => {
+          // 'interrupted' fires when cancel() is called — not a real error
+          if (e.error === 'interrupted') return;
+          clearChromeTtsKeepalive();
+          ttsState = 'idle';
+          ttsUsesBrowser = false;
+          ttsSpeechUtterance = null;
+          ttsLastCharIndex = 0;
+          setTtsStatus('Sin voz disponible. Intenta desde un navegador con voz en español.');
+          updateAudioBarUI();
+        };
+
+        ttsUsesBrowser = true;
+        ttsSpeechUtterance = utter;
+        window.speechSynthesis.speak(utter);
+      }, 120);
     }
 
     function playWithBrowserTts(text) {
