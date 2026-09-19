@@ -462,15 +462,48 @@
 
     /* ── Audio playback bar ── */
     .article-audio-bar {
-      display: flex;
+      display: none;
       align-items: center;
       gap: .75rem;
-      margin-top: 1.25rem;
       padding: .85rem 1.1rem;
-      background: rgba(15,23,42,.7);
-      border: 1px solid rgba(148,163,184,.18);
-      border-radius: 14px;
+      background: rgba(13,17,23,.92);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 18px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 8px 32px rgba(0,0,0,.45);
+      /* always fixed/floating — not inside the content flow */
+      position: fixed;
+      z-index: 200;
     }
+    .article-audio-bar.visible {
+      display: flex;
+    }
+
+    /* Desktop: floating pill at bottom-right */
+    @media (min-width: 601px) {
+      .article-audio-bar {
+        bottom: 2rem;
+        right: 2rem;
+        width: min(360px, calc(100vw - 4rem));
+      }
+    }
+
+    /* Mobile: full-width bar pinned to bottom edge */
+    @media (max-width: 600px) {
+      .article-audio-bar {
+        left: 0; right: 0; bottom: 0;
+        border-radius: 18px 18px 0 0;
+        border-left: none; border-right: none; border-bottom: none;
+        padding: .9rem max(1rem, env(safe-area-inset-left))
+                 max(.9rem, env(safe-area-inset-bottom))
+                 max(1rem, env(safe-area-inset-right));
+      }
+      /* push article content up so bar doesn't overlap */
+      #articleView.visible {
+        padding-bottom: 5.5rem;
+      }
+    }
+
     .audio-play-btn {
       flex: 0 0 auto;
       width: 42px; height: 42px;
@@ -505,6 +538,9 @@
       font-size: .82rem;
       color: var(--muted);
       margin-top: .15rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .audio-stop-btn {
       flex: 0 0 auto;
@@ -572,15 +608,6 @@
           Cargando artículo…
         </div>
       </div>
-      <!-- Audio playback bar -->
-      <div class="article-audio-bar" id="articleAudioBar">
-        <button class="audio-play-btn" id="audioPlayBtn" aria-label="Reproducir artículo en voz alta" disabled>▶</button>
-        <div class="audio-bar-info">
-          <div class="audio-bar-label">🔊 Escuchar artículo</div>
-          <div class="audio-bar-status" id="audioBarStatus">Cargando artículo…</div>
-        </div>
-        <button class="audio-stop-btn" id="audioStopBtn" disabled>Detener</button>
-      </div>
       <audio id="ttsAudioEl" style="display:none" preload="none"></audio>
 
       <a class="open-original-link" id="openOriginalLink" href="#" target="_blank" rel="noopener noreferrer">
@@ -594,6 +621,16 @@
       <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a>.<br>
       <a href="/">← Volver a Daily Spin</a>
     </p>
+  </div>
+
+  <!-- Audio playback bar (fixed/floating, outside page flow) -->
+  <div class="article-audio-bar" id="articleAudioBar" role="region" aria-label="Reproducción de audio">
+    <button class="audio-play-btn" id="audioPlayBtn" aria-label="Reproducir artículo en voz alta" disabled>▶</button>
+    <div class="audio-bar-info">
+      <div class="audio-bar-label">🔊 Escuchar artículo</div>
+      <div class="audio-bar-status" id="audioBarStatus">Cargando artículo…</div>
+    </div>
+    <button class="audio-stop-btn" id="audioStopBtn" disabled>Detener</button>
   </div>
 
   <!-- Word popup (singleton, moved around the DOM) -->
@@ -634,6 +671,7 @@
     // ── Views ──────────────────────────────────────────────────
     function showList() {
       stopTts();
+      enableAudioBar(false);
       document.getElementById('listView').classList.remove('hidden');
       document.getElementById('articleView').classList.remove('visible');
       document.getElementById('footerNote').style.display = '';
@@ -1349,6 +1387,8 @@
     audioStopBtn?.addEventListener('click', stopTts);
 
     function enableAudioBar(ready) {
+      const bar = document.getElementById('articleAudioBar');
+      if (bar) bar.classList.toggle('visible', !!ready);
       if (!audioPlayBtn) return;
       audioPlayBtn.disabled = !ready;
       setTtsStatus(ready ? 'Listo para escuchar' : 'Cargando artículo…');
