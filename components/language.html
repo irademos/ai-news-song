@@ -581,6 +581,7 @@
         </div>
         <button class="audio-stop-btn" id="audioStopBtn" disabled>Detener</button>
       </div>
+      <audio id="ttsAudioEl" style="display:none" preload="none"></audio>
 
       <a class="open-original-link" id="openOriginalLink" href="#" target="_blank" rel="noopener noreferrer">
         🔗 Ver artículo original
@@ -1167,10 +1168,10 @@
         try { window.speechSynthesis.cancel(); } catch {}
         ttsUsesBrowser = false;
         ttsSpeechUtterance = null;
-      } else if (ttsAudio) {
-        try { ttsAudio.pause(); } catch {}
-        ttsAudio = null;
       }
+      const audioEl = document.getElementById('ttsAudioEl');
+      if (audioEl) { try { audioEl.pause(); audioEl.src = ''; } catch {} }
+      ttsAudio = null;
       setTtsStatus('Listo para escuchar');
       updateAudioBarUI();
     }
@@ -1180,8 +1181,9 @@
       ttsState = 'paused';
       if (ttsUsesBrowser) {
         try { window.speechSynthesis.pause(); } catch {}
-      } else if (ttsAudio) {
-        try { ttsAudio.pause(); } catch {}
+      } else {
+        const audioEl = document.getElementById('ttsAudioEl');
+        try { audioEl?.pause(); } catch {}
       }
       setTtsStatus('En pausa');
       updateAudioBarUI();
@@ -1192,26 +1194,20 @@
       ttsState = 'playing';
       if (ttsUsesBrowser) {
         try { window.speechSynthesis.resume(); } catch {}
-      } else if (ttsAudio) {
-        try { ttsAudio.play(); } catch {}
+      } else {
+        const audioEl = document.getElementById('ttsAudioEl');
+        audioEl?.play().catch(() => {});
       }
       setTtsStatus('Reproduciendo…');
       updateAudioBarUI();
     }
 
-    function playWithBrowserTts(text) {
-      if (!('speechSynthesis' in window)) {
-        setTtsStatus('TTS no disponible en este navegador.');
-        ttsState = 'idle';
-        updateAudioBarUI();
-        return;
-      }
+    function doSpeakWithBrowser(text) {
       window.speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = 'es-ES';
       utter.rate = 0.95;
 
-      // Try to pick a Spanish voice
       const voices = window.speechSynthesis.getVoices();
       const esVoice = voices.find(v => v.lang.startsWith('es')) || null;
       if (esVoice) utter.voice = esVoice;
@@ -1228,11 +1224,13 @@
         setTtsStatus('Listo para escuchar');
         updateAudioBarUI();
       };
-      utter.onerror = () => {
+      utter.onerror = (e) => {
+        // 'interrupted' fires when cancel() is called — not a real error
+        if (e.error === 'interrupted') return;
         ttsState = 'idle';
         ttsUsesBrowser = false;
         ttsSpeechUtterance = null;
-        setTtsStatus('Error al reproducir.');
+        setTtsStatus('Sin voz disponible. Intenta desde un navegador con voz en español.');
         updateAudioBarUI();
       };
 
@@ -1241,16 +1239,48 @@
       window.speechSynthesis.speak(utter);
     }
 
+    function playWithBrowserTts(text) {
+      if (!('speechSynthesis' in window)) {
+        setTtsStatus('TTS no disponible en este navegador.');
+        ttsState = 'idle';
+        updateAudioBarUI();
+        return;
+      }
+      ttsState = 'playing';
+      setTtsStatus('Preparando voz del navegador…');
+      updateAudioBarUI();
+
+      // Voices may not be loaded yet on first call
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length) {
+        doSpeakWithBrowser(text);
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => {
+          window.speechSynthesis.onvoiceschanged = null;
+          doSpeakWithBrowser(text);
+        };
+        // Fallback if onvoiceschanged never fires
+        setTimeout(() => doSpeakWithBrowser(text), 500);
+      }
+    }
+
     async function playArticleAudio() {
-      const text = getArticleText();
-      if (!text) { setTtsStatus('No hay texto para leer.'); return; }
+      const rawText = getArticleText();
+      if (!rawText) { setTtsStatus('No hay texto para leer.'); return; }
+      // OpenAI TTS has a ~4096 char limit; truncate gracefully at a sentence boundary
+      const MAX_CHARS = 3800;
+      const text = rawText.length > MAX_CHARS
+        ? rawText.slice(0, MAX_CHARS).replace(/[^.!?]*$/, '').trim() || rawText.slice(0, MAX_CHARS)
+        : rawText;
 
       ttsState = 'loading';
       setTtsStatus('Preparando audio…');
       updateAudioBarUI();
 
+      const audioEl = document.getElementById('ttsAudioEl');
+
       try {
-        const audio = await puter.ai.txt2speech(text, {
+        const puterAudio = await puter.ai.txt2speech(text, {
           provider: 'openai',
           model: 'gpt-4o-mini-tts',
           voice: 'alloy',
@@ -1258,29 +1288,46 @@
           instructions: 'Speak clearly in Spanish at a natural pace.',
         });
 
-        const src = audio?.src || '';
+        const src = puterAudio?.src || '';
         if (!src) throw new Error('No audio src returned');
 
-        ttsAudio = audio;
-        ttsUsesBrowser = false;
-        ttsState = 'playing';
-        setTtsStatus('Reproduciendo…');
-        updateAudioBarUI();
+        if (!audioEl) throw new Error('No audio element');
 
-        audio.onended = () => {
+        ttsUsesBrowser = false;
+
+        const onEnded = () => {
           ttsState = 'idle';
           ttsAudio = null;
           setTtsStatus('Listo para escuchar');
           updateAudioBarUI();
+          audioEl.removeEventListener('ended', onEnded);
+          audioEl.removeEventListener('error', onError);
         };
-        audio.onerror = () => {
+        const onError = () => {
           ttsState = 'idle';
           ttsAudio = null;
           setTtsStatus('Error de audio. Intenta de nuevo.');
           updateAudioBarUI();
+          audioEl.removeEventListener('ended', onEnded);
+          audioEl.removeEventListener('error', onError);
         };
 
-        audio.play();
+        audioEl.addEventListener('ended', onEnded);
+        audioEl.addEventListener('error', onError);
+        audioEl.src = src;
+        audioEl.load();
+        ttsAudio = audioEl;
+        ttsState = 'playing';
+        setTtsStatus('Reproduciendo…');
+        updateAudioBarUI();
+        audioEl.play().catch(() => {
+          audioEl.removeEventListener('ended', onEnded);
+          audioEl.removeEventListener('error', onError);
+          ttsState = 'idle';
+          ttsAudio = null;
+          setTtsStatus('Error al iniciar el audio.');
+          updateAudioBarUI();
+        });
       } catch (err) {
         console.warn('Puter TTS failed, falling back to browser TTS:', err);
         ttsAudio = null;
