@@ -463,8 +463,8 @@
     /* ── Audio playback bar ── */
     .article-audio-bar {
       display: none;
-      align-items: center;
-      gap: .75rem;
+      flex-direction: column;
+      gap: .55rem;
       padding: .85rem 1.1rem;
       background: rgba(13,17,23,.92);
       border: 1px solid rgba(148,163,184,.2);
@@ -477,6 +477,39 @@
     }
     .article-audio-bar.visible {
       display: flex;
+    }
+    .audio-bar-main {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      width: 100%;
+    }
+    .audio-bar-controls {
+      display: flex;
+      align-items: center;
+      gap: .45rem;
+    }
+    .audio-ctrl-btn {
+      background: rgba(148,163,184,.12);
+      border: 1px solid rgba(148,163,184,.2);
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: .78rem;
+      font-weight: 600;
+      padding: .3rem .6rem;
+      transition: background .15s, color .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    .audio-ctrl-btn:hover:not(:disabled) {
+      background: rgba(148,163,184,.22);
+      color: var(--text);
+    }
+    .audio-ctrl-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .audio-ctrl-btn.speed-btn.active {
+      background: rgba(245,158,11,.18);
+      border-color: rgba(245,158,11,.5);
+      color: var(--accent);
     }
 
     /* Desktop: floating pill at bottom-right */
@@ -625,12 +658,20 @@
 
   <!-- Audio playback bar (fixed/floating, outside page flow) -->
   <div class="article-audio-bar" id="articleAudioBar" role="region" aria-label="Reproducción de audio">
-    <button class="audio-play-btn" id="audioPlayBtn" aria-label="Reproducir artículo en voz alta" disabled>▶</button>
-    <div class="audio-bar-info">
-      <div class="audio-bar-label">🔊 Escuchar artículo</div>
-      <div class="audio-bar-status" id="audioBarStatus">Cargando artículo…</div>
+    <div class="audio-bar-main">
+      <button class="audio-play-btn" id="audioPlayBtn" aria-label="Reproducir artículo en voz alta" disabled>▶</button>
+      <div class="audio-bar-info">
+        <div class="audio-bar-label">🔊 Escuchar artículo</div>
+        <div class="audio-bar-status" id="audioBarStatus">Cargando artículo…</div>
+      </div>
+      <button class="audio-stop-btn" id="audioStopBtn" disabled>Detener</button>
     </div>
-    <button class="audio-stop-btn" id="audioStopBtn" disabled>Detener</button>
+    <div class="audio-bar-controls">
+      <button class="audio-ctrl-btn" id="audioBack10Btn" disabled title="Retroceder 10 segundos">⏪ 10s</button>
+      <button class="audio-ctrl-btn speed-btn active" data-rate="1" id="speed1Btn">1x</button>
+      <button class="audio-ctrl-btn speed-btn" data-rate="0.5" id="speedHalfBtn">½x</button>
+      <button class="audio-ctrl-btn speed-btn" data-rate="0.25" id="speedQuarterBtn">¼x</button>
+    </div>
   </div>
 
   <!-- Word popup (singleton, moved around the DOM) -->
@@ -1165,10 +1206,14 @@
     let ttsAudio = null;      // HTMLAudioElement or puter audio object
     let ttsSpeechUtterance = null;
     let ttsUsesBrowser = false;
+    let ttsRate = 1.0;
+    let ttsFullText = '';
+    let ttsLastCharIndex = 0;
 
     const audioPlayBtn  = document.getElementById('audioPlayBtn');
     const audioStopBtn  = document.getElementById('audioStopBtn');
     const audioBarStatus = document.getElementById('audioBarStatus');
+    const audioBack10Btn = document.getElementById('audioBack10Btn');
 
     function getArticleText() {
       const body = document.getElementById('articleBody');
@@ -1182,6 +1227,7 @@
 
     function updateAudioBarUI() {
       if (!audioPlayBtn || !audioStopBtn) return;
+      const active = ttsState === 'playing' || ttsState === 'paused';
       if (ttsState === 'idle') {
         audioPlayBtn.textContent = '▶';
         audioPlayBtn.setAttribute('aria-label', 'Reproducir artículo en voz alta');
@@ -1198,6 +1244,7 @@
         audioPlayBtn.setAttribute('aria-label', 'Reanudar');
         audioStopBtn.disabled = false;
       }
+      if (audioBack10Btn) audioBack10Btn.disabled = !active;
     }
 
     function stopTts() {
@@ -1210,6 +1257,7 @@
       const audioEl = document.getElementById('ttsAudioEl');
       if (audioEl) { try { audioEl.pause(); audioEl.src = ''; } catch {} }
       ttsAudio = null;
+      ttsLastCharIndex = 0;
       setTtsStatus('Listo para escuchar');
       updateAudioBarUI();
     }
@@ -1218,7 +1266,9 @@
       if (ttsState !== 'playing') return;
       ttsState = 'paused';
       if (ttsUsesBrowser) {
-        try { window.speechSynthesis.pause(); } catch {}
+        // speechSynthesis.pause() is unreliable in Chrome — cancel instead
+        // and track charIndex via onboundary so we can resume from position
+        try { window.speechSynthesis.cancel(); } catch {}
       } else {
         const audioEl = document.getElementById('ttsAudioEl');
         try { audioEl?.pause(); } catch {}
@@ -1231,25 +1281,65 @@
       if (ttsState !== 'paused') return;
       ttsState = 'playing';
       if (ttsUsesBrowser) {
-        try { window.speechSynthesis.resume(); } catch {}
+        doSpeakWithBrowser(ttsFullText, ttsLastCharIndex);
       } else {
         const audioEl = document.getElementById('ttsAudioEl');
         audioEl?.play().catch(() => {});
+        setTtsStatus('Reproduciendo…');
+        updateAudioBarUI();
       }
-      setTtsStatus('Reproduciendo…');
-      updateAudioBarUI();
     }
 
-    function doSpeakWithBrowser(text) {
+    function goBack10s() {
+      if (ttsState !== 'playing' && ttsState !== 'paused') return;
+      if (ttsUsesBrowser) {
+        // Estimate ~12 chars/sec at 1x speed; adjust for current rate
+        const charsBack = Math.round(12 * ttsRate * 10);
+        ttsLastCharIndex = Math.max(0, ttsLastCharIndex - charsBack);
+        const wasPlaying = ttsState === 'playing';
+        try { window.speechSynthesis.cancel(); } catch {}
+        if (wasPlaying) {
+          doSpeakWithBrowser(ttsFullText, ttsLastCharIndex);
+        }
+        // If paused, resume will start from the updated ttsLastCharIndex
+      } else {
+        const audioEl = document.getElementById('ttsAudioEl');
+        if (audioEl) audioEl.currentTime = Math.max(0, audioEl.currentTime - 10);
+      }
+    }
+
+    function setTtsRate(rate) {
+      ttsRate = rate;
+      document.querySelectorAll('.speed-btn').forEach(b => {
+        b.classList.toggle('active', parseFloat(b.dataset.rate) === rate);
+      });
+      if (ttsUsesBrowser && (ttsState === 'playing' || ttsState === 'paused')) {
+        const wasPlaying = ttsState === 'playing';
+        try { window.speechSynthesis.cancel(); } catch {}
+        if (wasPlaying) {
+          doSpeakWithBrowser(ttsFullText, ttsLastCharIndex);
+        }
+        // if paused, rate will be used when resumed
+      }
+    }
+
+    function doSpeakWithBrowser(text, startFrom) {
+      startFrom = startFrom || 0;
+      const textToSpeak = startFrom > 0 ? text.slice(startFrom) : text;
       window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
+      const utter = new SpeechSynthesisUtterance(textToSpeak);
       utter.lang = 'es-ES';
-      utter.rate = 0.95;
+      utter.rate = ttsRate;
 
       const voices = window.speechSynthesis.getVoices();
       const esVoice = voices.find(v => v.lang.startsWith('es')) || null;
       if (esVoice) utter.voice = esVoice;
 
+      utter.onboundary = (e) => {
+        if (e.name === 'word') {
+          ttsLastCharIndex = startFrom + e.charIndex;
+        }
+      };
       utter.onstart = () => {
         ttsState = 'playing';
         setTtsStatus('Reproduciendo… (voz del navegador)');
@@ -1259,6 +1349,7 @@
         ttsState = 'idle';
         ttsUsesBrowser = false;
         ttsSpeechUtterance = null;
+        ttsLastCharIndex = 0;
         setTtsStatus('Listo para escuchar');
         updateAudioBarUI();
       };
@@ -1268,6 +1359,7 @@
         ttsState = 'idle';
         ttsUsesBrowser = false;
         ttsSpeechUtterance = null;
+        ttsLastCharIndex = 0;
         setTtsStatus('Sin voz disponible. Intenta desde un navegador con voz en español.');
         updateAudioBarUI();
       };
@@ -1284,6 +1376,8 @@
         updateAudioBarUI();
         return;
       }
+      ttsFullText = text;
+      ttsLastCharIndex = 0;
       ttsState = 'playing';
       setTtsStatus('Preparando voz del navegador…');
       updateAudioBarUI();
@@ -1291,14 +1385,14 @@
       // Voices may not be loaded yet on first call
       const voices = window.speechSynthesis.getVoices();
       if (voices.length) {
-        doSpeakWithBrowser(text);
+        doSpeakWithBrowser(text, 0);
       } else {
         window.speechSynthesis.onvoiceschanged = () => {
           window.speechSynthesis.onvoiceschanged = null;
-          doSpeakWithBrowser(text);
+          doSpeakWithBrowser(text, 0);
         };
         // Fallback if onvoiceschanged never fires
-        setTimeout(() => doSpeakWithBrowser(text), 500);
+        setTimeout(() => doSpeakWithBrowser(text, 0), 500);
       }
     }
 
@@ -1385,12 +1479,18 @@
     });
 
     audioStopBtn?.addEventListener('click', stopTts);
+    audioBack10Btn?.addEventListener('click', goBack10s);
+
+    document.querySelectorAll('.speed-btn').forEach(btn => {
+      btn.addEventListener('click', () => setTtsRate(parseFloat(btn.dataset.rate)));
+    });
 
     function enableAudioBar(ready) {
       const bar = document.getElementById('articleAudioBar');
       if (bar) bar.classList.toggle('visible', !!ready);
       if (!audioPlayBtn) return;
       audioPlayBtn.disabled = !ready;
+      if (audioBack10Btn) audioBack10Btn.disabled = true; // enabled dynamically via updateAudioBarUI
       setTtsStatus(ready ? 'Listo para escuchar' : 'Cargando artículo…');
       if (ready) updateAudioBarUI();
     }
