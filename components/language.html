@@ -272,6 +272,8 @@
       border-radius: 3px;
       transition: background .15s, color .15s;
       padding: 0 1px;
+      user-select: none;
+      -webkit-user-select: none;
     }
     .word:hover {
       background: rgba(245,158,11,.22);
@@ -839,7 +841,7 @@
       for (const part of parts) {
         if (!part) continue;
         // A "word" is a token with at least one letter (handles accented chars)
-        if (/\p{L}/u.test(part) && /\S/.test(part)) {
+        if (/[\p{L}\d]/u.test(part) && /\S/.test(part)) {
           const span = document.createElement('span');
           span.className = 'word';
           span.textContent = part;
@@ -907,7 +909,6 @@
     const phraseLoading = document.getElementById('phraseLoading');
     const phraseResult = document.getElementById('phraseResult');
     let lastPhraseRange = null;
-    let isDragging = false;
 
     // Reposition word popup on scroll so it tracks the anchor word
     window.addEventListener('scroll', () => {
@@ -941,64 +942,93 @@
       lastPhraseRange = null;
     }
 
-    // Extract text only from .word spans in the selection
-    function getSelectedPhraseFromSelection(sel) {
-      if (!sel || sel.isCollapsed) return '';
-      const range = sel.getRangeAt(0);
-      // Walk all .word nodes in the range
-      const articleBody = document.getElementById('articleBody');
-      if (!articleBody) return '';
-      const words = [...articleBody.querySelectorAll('.word')];
-      const selectedWords = words.filter(w => range.intersectsNode(w));
-      if (selectedWords.length < 2) return '';
-      return selectedWords.map(w => w.textContent.trim()).join(' ');
-    }
-
     // Track recent touch to avoid duplicate mouse events on mobile
     let recentTouch = false;
     document.addEventListener('touchstart', () => { recentTouch = true; }, { passive: true });
     document.addEventListener('touchend', () => { setTimeout(() => { recentTouch = false; }, 600); }, { passive: true });
 
+    // ── Desktop mouse drag word selection ────────────────────────
+    let isMouseSelecting = false;
+    let mouseSelectStart = null;
+    let mouseSelectedWords = [];
+    let mouseJustDragged = false; // suppresses click after a completed drag
+
+    function clearMouseSelection() {
+      mouseSelectedWords.forEach(w => w.classList.remove('touch-selected'));
+      mouseSelectedWords = [];
+    }
+
+    function updateMouseSelection(endWord) {
+      if (!mouseSelectStart || !endWord) return;
+      const all = getAllArticleWords();
+      const si = all.indexOf(mouseSelectStart);
+      const ei = all.indexOf(endWord);
+      if (si === -1 || ei === -1) return;
+      clearMouseSelection();
+      const [lo, hi] = si <= ei ? [si, ei] : [ei, si];
+      mouseSelectedWords = all.slice(lo, hi + 1);
+      mouseSelectedWords.forEach(w => w.classList.add('touch-selected'));
+    }
+
     document.addEventListener('mousedown', (e) => {
       if (recentTouch) return;
       if (e.target.classList.contains('word')) {
-        isDragging = true;
+        isMouseSelecting = true;
+        mouseSelectStart = e.target;
+        clearMouseSelection();
       } else if (!phrasePopupEl.contains(e.target)) {
         closePhrasePopup();
       }
     });
 
+    document.addEventListener('mousemove', (e) => {
+      if (!isMouseSelecting) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      if (el?.classList.contains('word')) updateMouseSelection(el);
+    });
+
     document.addEventListener('mouseup', (e) => {
-      if (!isDragging) return;
-      isDragging = false;
+      if (!isMouseSelecting) return;
+      isMouseSelecting = false;
 
-      // Give browser a tick to finalize selection
-      setTimeout(() => {
-        const sel = window.getSelection();
-        const phrase = getSelectedPhraseFromSelection(sel);
-        if (!phrase) return;
+      const selected = [...mouseSelectedWords];
+      clearMouseSelection();
 
-        const range = sel.getRangeAt(0);
-        lastPhraseRange = range;
+      if (selected.length < 2) {
+        mouseSelectStart = null;
+        return; // let click handler fire normally
+      }
 
-        // Close single-word popup if open
-        closeWordPopup();
-        // Clear selection highlight (leave text selected visually)
-        phrasePopupText.textContent = `"${phrase}"`;
-        phraseLoading.classList.remove('visible');
-        phraseResult.classList.remove('visible');
-        phraseResult.textContent = '';
+      mouseJustDragged = true;
+      requestAnimationFrame(() => { mouseJustDragged = false; });
 
-        phrasePopupEl.style.display = 'flex';
-        positionPhrasePopup(range);
+      const phrase = selected.map(w => w.textContent.trim()).join(' ');
+      mouseSelectStart = null;
+      if (!phrase) return;
 
-        // Wire up buttons for this phrase
-        document.getElementById('phraseTranslateBtn').onclick = () => translatePhrase(phrase);
-        document.getElementById('phraseGoogleBtn').onclick = () => {
-          const q = encodeURIComponent(`"${phrase}" Spanish meaning in English`);
-          window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
-        };
-      }, 10);
+      closeWordPopup();
+      phrasePopupText.textContent = `"${phrase}"`;
+      phraseLoading.classList.remove('visible');
+      phraseResult.classList.remove('visible');
+      phraseResult.textContent = '';
+
+      // Position near cursor
+      const popW = 220, popH = 160;
+      let px = e.clientX, py = e.clientY + 14;
+      if (px + popW > window.innerWidth - 8) px = window.innerWidth - popW - 8;
+      if (px < 8) px = 8;
+      if (py + popH > window.innerHeight - 8) py = e.clientY - popH - 6;
+      if (py < 8) py = 8;
+      phrasePopupEl.style.left = `${px}px`;
+      phrasePopupEl.style.top = `${py}px`;
+      phrasePopupEl.style.display = 'flex';
+
+      const capturedPhrase = phrase;
+      document.getElementById('phraseTranslateBtn').onclick = () => translatePhrase(capturedPhrase);
+      document.getElementById('phraseGoogleBtn').onclick = () => {
+        const q = encodeURIComponent(`"${capturedPhrase}" Spanish meaning in English`);
+        window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener,noreferrer');
+      };
     });
 
     // ── Touch long-press word selection (mobile) ─────────────────
@@ -1165,10 +1195,8 @@
     async function onWordClick(e) {
       e.stopPropagation();
 
-      // If user just finished a drag selection (multiple words), let mouseup handle it
-      const sel = window.getSelection();
-      const dragPhrase = getSelectedPhraseFromSelection(sel);
-      if (dragPhrase) return;
+      // If a mouse drag just finished, mouseup already showed the phrase popup
+      if (mouseJustDragged) return;
 
       const el = e.currentTarget;
       const rawWord = el.textContent.replace(/[^a-zA-ZÀ-ÿñÑ]/g, '').trim();
