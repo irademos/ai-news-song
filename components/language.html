@@ -1693,10 +1693,14 @@
       startFrom = startFrom || 0;
       const textToSpeak = startFrom > 0 ? text.slice(startFrom) : text;
 
-      // Cancel existing synthesis and give Chrome 120ms to process it before
-      // starting a new utterance — rapid cancel+speak can freeze Chrome's engine.
+      // Cancel any existing synthesis and give Chrome a moment before starting
+      // a new utterance — rapid cancel+speak can freeze Chrome's engine.
       clearChromeTtsKeepalive();
-      try { window.speechSynthesis.cancel(); } catch {}
+      const wasSpeaking = window.speechSynthesis.speaking || window.speechSynthesis.pending;
+      if (wasSpeaking) {
+        try { window.speechSynthesis.cancel(); } catch {}
+      }
+      const cancelDelay = wasSpeaking ? 120 : 0;
 
       setTimeout(() => {
         // Bail if the user stopped/navigated away while waiting
@@ -1770,7 +1774,7 @@
         ttsStartTime = Date.now();
         ttsStartCharIndex = startFrom;
         window.speechSynthesis.speak(utter);
-      }, 120);
+      }, cancelDelay);
     }
 
     function playWithBrowserTts(text) {
@@ -1795,12 +1799,14 @@
       if (voices.length) {
         doSpeakWithBrowser(text, 0);
       } else {
+        let voiceStarted = false;
+        const voiceFallback = setTimeout(() => {
+          if (!voiceStarted) { voiceStarted = true; doSpeakWithBrowser(text, 0); }
+        }, 500);
         window.speechSynthesis.onvoiceschanged = () => {
           window.speechSynthesis.onvoiceschanged = null;
-          doSpeakWithBrowser(text, 0);
+          if (!voiceStarted) { voiceStarted = true; clearTimeout(voiceFallback); doSpeakWithBrowser(text, 0); }
         };
-        // Fallback if onvoiceschanged never fires
-        setTimeout(() => doSpeakWithBrowser(text, 0), 500);
       }
     }
 
