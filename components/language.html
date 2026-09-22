@@ -287,6 +287,11 @@
       background: rgba(52,211,153,.28);
       color: var(--accent2);
     }
+    .word.tts-highlight {
+      background: rgba(99,179,237,.45);
+      color: var(--text);
+      border-radius: 2px;
+    }
 
     /* Word popup */
     .word-popup {
@@ -1365,6 +1370,40 @@
     let ttsStartTime = 0;       // Date.now() when current utterance started
     let ttsStartCharIndex = 0;  // charIndex we started the current utterance from
     let chromeTtsKeepalive = null;
+    let ttsWordIndex = [];      // [{start, end, el}] built when browser TTS starts
+    let ttsHighlightedEl = null;
+
+    function buildTtsWordIndex() {
+      const words = [...document.querySelectorAll('#articleBody .word')];
+      const fullText = ttsFullText;
+      const index = [];
+      let pos = 0;
+      for (const el of words) {
+        const w = el.textContent;
+        const idx = fullText.indexOf(w, pos);
+        if (idx === -1) continue;
+        index.push({ start: idx, end: idx + w.length, el });
+        pos = idx + w.length;
+      }
+      return index;
+    }
+
+    function highlightTtsWord(charIdx) {
+      // Find the word span whose range contains charIdx, or the next word after it
+      let match = null;
+      for (const entry of ttsWordIndex) {
+        if (charIdx >= entry.start && charIdx < entry.end) { match = entry.el; break; }
+        if (entry.start > charIdx && !match) { match = entry.el; break; }
+      }
+      if (match === ttsHighlightedEl) return;
+      if (ttsHighlightedEl) ttsHighlightedEl.classList.remove('tts-highlight');
+      ttsHighlightedEl = match;
+      if (ttsHighlightedEl) ttsHighlightedEl.classList.add('tts-highlight');
+    }
+
+    function clearTtsHighlight() {
+      if (ttsHighlightedEl) { ttsHighlightedEl.classList.remove('tts-highlight'); ttsHighlightedEl = null; }
+    }
     // Chrome onboundary is unreliable; use elapsed time as a fallback position estimate
     const BROWSER_TTS_CHARS_PER_SEC = 14; // ~14 chars/sec at rate 1x, scales with ttsRate
 
@@ -1430,6 +1469,7 @@
       ttsAudio = null;
       ttsLastCharIndex = 0;
       ttsStartTime = 0;
+      clearTtsHighlight();
       setTtsStatus('Listo para escuchar');
       updateAudioBarUI();
     }
@@ -1529,7 +1569,10 @@
         // onboundary gives us exact position when Chrome fires it; time-based
         // estimation covers us when it doesn't.
         utter.onboundary = (e) => {
-          if (e.name === 'word') ttsLastCharIndex = startFrom + e.charIndex;
+          if (e.name === 'word') {
+            ttsLastCharIndex = startFrom + e.charIndex;
+            highlightTtsWord(ttsLastCharIndex);
+          }
         };
         utter.onstart = () => {
           ttsStartTime = Date.now(); // refine with actual start time
@@ -1554,6 +1597,7 @@
           ttsSpeechUtterance = null;
           ttsLastCharIndex = 0;
           ttsStartTime = 0;
+          clearTtsHighlight();
           setTtsStatus('Listo para escuchar');
           updateAudioBarUI();
         };
@@ -1566,6 +1610,7 @@
           ttsSpeechUtterance = null;
           ttsLastCharIndex = 0;
           ttsStartTime = 0;
+          clearTtsHighlight();
           setTtsStatus('Sin voz disponible. Intenta desde un navegador con voz en español.');
           updateAudioBarUI();
         };
@@ -1587,6 +1632,7 @@
         return;
       }
       ttsFullText = text;
+      ttsWordIndex = buildTtsWordIndex();
       ttsLastCharIndex = 0;
       ttsStartTime = 0;
       ttsState = 'playing';
