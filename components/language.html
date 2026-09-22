@@ -601,6 +601,58 @@
     .audio-stop-btn:hover { background: rgba(148,163,184,.15); color: var(--text); }
     .audio-stop-btn:disabled { opacity: .45; cursor: not-allowed; }
 
+    /* Progress / seek bar */
+    .audio-progress-row {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      width: 100%;
+    }
+    .audio-time {
+      font-size: .72rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      min-width: 2.4rem;
+    }
+    .audio-time.end { text-align: right; }
+    .audio-seek-bar {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 4px;
+      background: rgba(148,163,184,.25);
+      outline: none;
+      cursor: pointer;
+      position: relative;
+    }
+    .audio-seek-bar::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      box-shadow: 0 0 4px rgba(245,158,11,.6);
+      transition: transform .1s;
+    }
+    .audio-seek-bar::-webkit-slider-thumb:hover { transform: scale(1.25); }
+    .audio-seek-bar::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 0 4px rgba(245,158,11,.6);
+    }
+    /* tint the filled portion */
+    .audio-seek-bar {
+      background: linear-gradient(to right, var(--accent) var(--seek-pct, 0%), rgba(148,163,184,.25) var(--seek-pct, 0%));
+    }
+
     @media (max-width: 600px) {
       body { padding: 1.25rem .75rem; }
       .story-card { padding: 1rem 1.1rem; }
@@ -677,6 +729,11 @@
       </div>
       <button class="audio-stop-btn" id="audioStopBtn" disabled>Detener</button>
     </div>
+    <div class="audio-progress-row">
+      <span class="audio-time" id="audioTimeCur">0:00</span>
+      <input type="range" id="audioSeekBar" class="audio-seek-bar" min="0" max="1000" value="0" step="1" aria-label="Posición de reproducción" />
+      <span class="audio-time end" id="audioTimeTot">0:00</span>
+    </div>
     <div class="audio-bar-controls">
       <button class="audio-ctrl-btn" id="audioBack10Btn" disabled title="Retroceder 10 segundos">⏪ 10s</button>
       <button class="audio-ctrl-btn speed-btn active" data-rate="1" id="speed1Btn">1x</button>
@@ -703,7 +760,6 @@
     <div class="phrase-popup__result" id="phraseResult"></div>
   </div>
 
-  <script src="https://js.puter.com/v2/"></script>
   <script type="module">
     let allStories = [];
     let activeSource = 'all';
@@ -1410,7 +1466,9 @@
       if (ttsHighlightRaf) return;
       function tick() {
         if (ttsState === 'playing' && ttsUsesBrowser) {
-          highlightTtsWord(estimateBrowserTtsCharIndex());
+          const charIdx = estimateBrowserTtsCharIndex();
+          highlightTtsWord(charIdx);
+          if (!seekBarDragging) updateSeekBar(charIdx);
           ttsHighlightRaf = requestAnimationFrame(tick);
         } else {
           ttsHighlightRaf = null;
@@ -1423,7 +1481,7 @@
       if (ttsHighlightRaf) { cancelAnimationFrame(ttsHighlightRaf); ttsHighlightRaf = null; }
     }
     // Chrome onboundary is unreliable; use elapsed time as a fallback position estimate
-    const BROWSER_TTS_CHARS_PER_SEC = 14; // ~14 chars/sec at rate 1x, scales with ttsRate
+    const BROWSER_TTS_CHARS_PER_SEC = 18; // ~18 chars/sec at rate 1x, scales with ttsRate
 
     function estimateBrowserTtsCharIndex() {
       if (!ttsStartTime) return ttsLastCharIndex;
@@ -1437,6 +1495,71 @@
     const audioStopBtn  = document.getElementById('audioStopBtn');
     const audioBarStatus = document.getElementById('audioBarStatus');
     const audioBack10Btn = document.getElementById('audioBack10Btn');
+    const audioSeekBar  = document.getElementById('audioSeekBar');
+    const audioTimeCur  = document.getElementById('audioTimeCur');
+    const audioTimeTot  = document.getElementById('audioTimeTot');
+
+    function formatTime(secs) {
+      const m = Math.floor(secs / 60);
+      const s = Math.floor(secs % 60);
+      return `${m}:${s.toString().padStart(2,'0')}`;
+    }
+
+    function updateSeekBar(charIdx) {
+      if (!audioSeekBar || !ttsFullText) return;
+      const total = ttsFullText.length;
+      const pct = total > 0 ? charIdx / total : 0;
+      const val = Math.round(pct * 1000);
+      audioSeekBar.value = val;
+      audioSeekBar.style.setProperty('--seek-pct', `${(pct * 100).toFixed(1)}%`);
+      const charsPerSec = BROWSER_TTS_CHARS_PER_SEC * ttsRate;
+      const totalSecs = total / charsPerSec;
+      const curSecs = charIdx / charsPerSec;
+      if (audioTimeCur) audioTimeCur.textContent = formatTime(curSecs);
+      if (audioTimeTot) audioTimeTot.textContent = formatTime(totalSecs);
+    }
+
+    function resetSeekBar() {
+      if (!audioSeekBar) return;
+      audioSeekBar.value = 0;
+      audioSeekBar.style.setProperty('--seek-pct', '0%');
+      if (audioTimeCur) audioTimeCur.textContent = '0:00';
+      if (audioTimeTot) audioTimeTot.textContent = '0:00';
+    }
+
+    let seekBarDragging = false;
+    if (audioSeekBar) {
+      audioSeekBar.addEventListener('mousedown', () => { seekBarDragging = true; });
+      audioSeekBar.addEventListener('touchstart', () => { seekBarDragging = true; }, { passive: true });
+      audioSeekBar.addEventListener('mouseup', doSeek);
+      audioSeekBar.addEventListener('touchend', doSeek, { passive: true });
+      audioSeekBar.addEventListener('input', () => {
+        // live-update fill while dragging
+        const pct = audioSeekBar.value / 1000;
+        audioSeekBar.style.setProperty('--seek-pct', `${(pct * 100).toFixed(1)}%`);
+        if (ttsFullText) {
+          const charsPerSec = BROWSER_TTS_CHARS_PER_SEC * ttsRate;
+          if (audioTimeCur) audioTimeCur.textContent = formatTime(pct * ttsFullText.length / charsPerSec);
+        }
+      });
+    }
+
+    function doSeek() {
+      seekBarDragging = false;
+      if (!ttsFullText || ttsState === 'idle') return;
+      const pct = audioSeekBar.value / 1000;
+      const newCharIdx = Math.round(pct * ttsFullText.length);
+      const wasPlaying = ttsState === 'playing';
+      ttsLastCharIndex = newCharIdx;
+      ttsStartTime = 0;
+      clearChromeTtsKeepalive();
+      try { window.speechSynthesis.cancel(); } catch {}
+      if (wasPlaying) {
+        ttsState = 'loading';
+        updateAudioBarUI();
+        doSpeakWithBrowser(ttsFullText, newCharIdx);
+      }
+    }
 
     function getArticleText() {
       const body = document.getElementById('articleBody');
@@ -1489,6 +1612,7 @@
       ttsLastCharIndex = 0;
       ttsStartTime = 0;
       clearTtsHighlight();
+      resetSeekBar();
       setTtsStatus('Listo para escuchar');
       updateAudioBarUI();
     }
@@ -1620,6 +1744,7 @@
           ttsLastCharIndex = 0;
           ttsStartTime = 0;
           clearTtsHighlight();
+          resetSeekBar();
           setTtsStatus('Listo para escuchar');
           updateAudioBarUI();
         };
@@ -1634,6 +1759,7 @@
           ttsLastCharIndex = 0;
           ttsStartTime = 0;
           clearTtsHighlight();
+          resetSeekBar();
           setTtsStatus('Sin voz disponible. Intenta desde un navegador con voz en español.');
           updateAudioBarUI();
         };
@@ -1659,6 +1785,8 @@
       ttsLastCharIndex = 0;
       ttsStartTime = 0;
       ttsState = 'playing';
+      // Show total estimated time
+      updateSeekBar(0);
       setTtsStatus('Preparando voz del navegador…');
       updateAudioBarUI();
 
@@ -1676,76 +1804,10 @@
       }
     }
 
-    async function playArticleAudio() {
-      const rawText = getArticleText();
-      if (!rawText) { setTtsStatus('No hay texto para leer.'); return; }
-      // OpenAI TTS has a ~4096 char limit; truncate gracefully at a sentence boundary
-      const MAX_CHARS = 3800;
-      const text = rawText.length > MAX_CHARS
-        ? rawText.slice(0, MAX_CHARS).replace(/[^.!?]*$/, '').trim() || rawText.slice(0, MAX_CHARS)
-        : rawText;
-
-      ttsState = 'loading';
-      setTtsStatus('Preparando audio…');
-      updateAudioBarUI();
-
-      const audioEl = document.getElementById('ttsAudioEl');
-
-      try {
-        const puterAudio = await puter.ai.txt2speech(text, {
-          provider: 'openai',
-          model: 'gpt-4o-mini-tts',
-          voice: 'alloy',
-          response_format: 'mp3',
-          instructions: 'Speak clearly in Spanish at a natural pace.',
-        });
-
-        const src = puterAudio?.src || '';
-        if (!src) throw new Error('No audio src returned');
-
-        if (!audioEl) throw new Error('No audio element');
-
-        ttsUsesBrowser = false;
-
-        const onEnded = () => {
-          ttsState = 'idle';
-          ttsAudio = null;
-          setTtsStatus('Listo para escuchar');
-          updateAudioBarUI();
-          audioEl.removeEventListener('ended', onEnded);
-          audioEl.removeEventListener('error', onError);
-        };
-        const onError = () => {
-          ttsState = 'idle';
-          ttsAudio = null;
-          setTtsStatus('Error de audio. Intenta de nuevo.');
-          updateAudioBarUI();
-          audioEl.removeEventListener('ended', onEnded);
-          audioEl.removeEventListener('error', onError);
-        };
-
-        audioEl.addEventListener('ended', onEnded);
-        audioEl.addEventListener('error', onError);
-        audioEl.src = src;
-        audioEl.load();
-        ttsAudio = audioEl;
-        ttsState = 'playing';
-        setTtsStatus('Reproduciendo…');
-        updateAudioBarUI();
-        audioEl.play().catch(() => {
-          audioEl.removeEventListener('ended', onEnded);
-          audioEl.removeEventListener('error', onError);
-          ttsState = 'idle';
-          ttsAudio = null;
-          setTtsStatus('Error al iniciar el audio.');
-          updateAudioBarUI();
-        });
-      } catch (err) {
-        console.warn('Puter TTS failed, falling back to browser TTS:', err);
-        ttsAudio = null;
-        ttsUsesBrowser = false;
-        playWithBrowserTts(text);
-      }
+    function playArticleAudio() {
+      const text = getArticleText();
+      if (!text) { setTtsStatus('No hay texto para leer.'); return; }
+      playWithBrowserTts(text);
     }
 
     audioPlayBtn?.addEventListener('click', () => {
