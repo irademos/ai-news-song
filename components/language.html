@@ -1372,6 +1372,7 @@
     let chromeTtsKeepalive = null;
     let ttsWordIndex = [];      // [{start, end, el}] built when browser TTS starts
     let ttsHighlightedEl = null;
+    let ttsHighlightRaf = null; // rAF handle for time-based highlight loop
 
     function buildTtsWordIndex() {
       const words = [...document.querySelectorAll('#articleBody .word')];
@@ -1403,6 +1404,23 @@
 
     function clearTtsHighlight() {
       if (ttsHighlightedEl) { ttsHighlightedEl.classList.remove('tts-highlight'); ttsHighlightedEl = null; }
+    }
+
+    function startTtsHighlightLoop() {
+      if (ttsHighlightRaf) return;
+      function tick() {
+        if (ttsState === 'playing' && ttsUsesBrowser) {
+          highlightTtsWord(estimateBrowserTtsCharIndex());
+          ttsHighlightRaf = requestAnimationFrame(tick);
+        } else {
+          ttsHighlightRaf = null;
+        }
+      }
+      ttsHighlightRaf = requestAnimationFrame(tick);
+    }
+
+    function stopTtsHighlightLoop() {
+      if (ttsHighlightRaf) { cancelAnimationFrame(ttsHighlightRaf); ttsHighlightRaf = null; }
     }
     // Chrome onboundary is unreliable; use elapsed time as a fallback position estimate
     const BROWSER_TTS_CHARS_PER_SEC = 14; // ~14 chars/sec at rate 1x, scales with ttsRate
@@ -1459,6 +1477,7 @@
     function stopTts() {
       ttsState = 'idle';
       clearChromeTtsKeepalive();
+      stopTtsHighlightLoop();
       if (ttsUsesBrowser) {
         try { window.speechSynthesis.cancel(); } catch {}
         ttsUsesBrowser = false;
@@ -1482,6 +1501,7 @@
         ttsLastCharIndex = estimateBrowserTtsCharIndex();
         ttsStartTime = 0;
         clearChromeTtsKeepalive();
+        stopTtsHighlightLoop();
         try { window.speechSynthesis.cancel(); } catch {}
       } else {
         const audioEl = document.getElementById('ttsAudioEl');
@@ -1579,6 +1599,7 @@
           ttsState = 'playing';
           setTtsStatus('Reproduciendo… (voz del navegador)');
           updateAudioBarUI();
+          startTtsHighlightLoop();
           // Chrome can freeze mid-utterance on long texts; periodic
           // pause+resume keeps the engine alive
           chromeTtsKeepalive = setInterval(() => {
@@ -1592,6 +1613,7 @@
         };
         utter.onend = () => {
           clearChromeTtsKeepalive();
+          stopTtsHighlightLoop();
           ttsState = 'idle';
           ttsUsesBrowser = false;
           ttsSpeechUtterance = null;
@@ -1605,6 +1627,7 @@
           // 'interrupted' fires when cancel() is called — not a real error
           if (e.error === 'interrupted') return;
           clearChromeTtsKeepalive();
+          stopTtsHighlightLoop();
           ttsState = 'idle';
           ttsUsesBrowser = false;
           ttsSpeechUtterance = null;
