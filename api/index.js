@@ -5,6 +5,7 @@ const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
 const { SPANISH_YOUTUBE_CHANNELS, fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl } = require('./youtubeService');
+const { SPANISH_MEDIUM_CHANNELS, fetchMediumStories, fetchMediumArticle, isMediumUrl } = require('./mediumService');
 const { archiveStories, listArchiveMonths, getArchiveMonth, MONTH_PATTERN } = require('./archiveService');
 const { translateStories, translateArticleBySentence } = require('./translationService');
 const { lookupWord } = require('./wordService');
@@ -1300,7 +1301,15 @@ app.get('/api/spanish-article', async (req, res) => {
   }
 
   try {
-    const content = isYoutubeUrl(url) ? await fetchYoutubeTranscript(url) : await fetchArticleContent(url);
+    let content;
+    if (isYoutubeUrl(url)) {
+      content = await fetchYoutubeTranscript(url);
+    } else if (isMediumUrl(url)) {
+      // Medium pages usually block scraping; prefer the author feed, fall back to the page.
+      content = await fetchMediumArticle(url).catch(() => fetchArticleContent(url));
+    } else {
+      content = await fetchArticleContent(url);
+    }
     if (!content) return res.status(404).json({ error: 'No readable content found.' });
     fbSet(key, { content, cached_at: Date.now() }).catch(() => {});
 
@@ -1425,6 +1434,7 @@ app.get('/api/spanish-news', async (req, res) => {
     const spanishResults = await Promise.all([
       ...SPANISH_SOURCES.map(fetchSpanishSourceStories),
       ...SPANISH_YOUTUBE_CHANNELS.map((channel) => fetchChannelVideos(channel)),
+      ...SPANISH_MEDIUM_CHANNELS.map((channel) => fetchMediumStories(channel)),
     ]);
     const nativeSpanish = spanishResults.flat().filter((s) => s.headline);
     await archiveRecentStories(nativeSpanish);

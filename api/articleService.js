@@ -121,6 +121,12 @@ async function fetchArticleContent(url) {
   throw new Error('Unable to extract article content from the provided URL.');
 }
 
+// Extracts readable paragraph text from an HTML fragment (e.g. an RSS content:encoded body).
+function extractTextFromHtml(html) {
+  return mergeParagraphs(extractParagraphs(html || '')).join('\n\n');
+}
+
 module.exports = {
   fetchArticleContent,
+  extractTextFromHtml,
 };
