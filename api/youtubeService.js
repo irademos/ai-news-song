@@ -1,7 +1,16 @@
 // Lists a YouTube channel's recent videos (via the public RSS feed) and fetches
 // their transcripts with youtubei.js, so videos can be read like articles.
 
+const { fbGet, fbSet } = require('./firebaseService');
+
 const YOUTUBE_FEED_URL = 'https://www.youtube.com/feeds/videos.xml?channel_id=';
+
+const TRANSCRIPT_CACHE_PATH = 'youtube_transcripts';
+
+// YouTube channels whose video transcripts are read like articles on the Spanish page
+const SPANISH_YOUTUBE_CHANNELS = [
+  { channelId: 'UCS0lmlVIYVz2qeWlZ_ynIWg', source: 'AJ+ Español', lang: 'es' },
+];
 
 function decodeEntities(text) {
   return text
@@ -55,11 +64,13 @@ function extractVideoId(url) {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.replace(/^www\.|^m\./, '');
-    if (host === 'youtu.be') return parsed.pathname.slice(1).split('/')[0] || null;
-    if (host !== 'youtube.com') return null;
-    if (parsed.searchParams.get('v')) return parsed.searchParams.get('v');
-    const pathMatch = parsed.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]{11})/);
-    return pathMatch ? pathMatch[1] : null;
+    let id = null;
+    if (host === 'youtu.be') id = parsed.pathname.slice(1).split('/')[0];
+    else if (host === 'youtube.com') {
+      id = parsed.searchParams.get('v') || (parsed.pathname.match(/^\/(?:shorts|embed|live)\/([^/]+)/) || [])[1];
+    }
+    // Video ids are always 11 url-safe characters (also safe to use as a Firebase key)
+    return id && /^[\w-]{11}$/.test(id) ? id : null;
   } catch {
     return null;
   }
@@ -83,8 +94,34 @@ function getInnertube() {
   return innertubePromise;
 }
 
-// Primary path: the transcript panel YouTube shows under the video
-async function transcriptFromPanel(info, lang) {
+// Clients to try, in order. Mobile clients' caption URLs work without the PO token
+// that web caption URLs now require, and are blocked less often from server IPs.
+const CAPTION_CLIENTS = ['ANDROID', 'IOS', 'WEB'];
+
+// Picks the best caption track: human captions over auto-generated, in the wanted language
+function pickCaptionTrack(info, lang) {
+  const tracks = info.captions?.caption_tracks || [];
+  const matching = tracks.filter((t) => t.language_code?.startsWith(lang));
+  return matching.find((t) => t.kind !== 'asr') || matching[0] || null;
+}
+
+async function downloadCaptionTrack(track) {
+  const url = new URL(track.base_url);
+  url.searchParams.set('fmt', 'json3');
+  const response = await fetch(url, { headers: { 'Accept-Language': 'es' } });
+  if (!response.ok) throw new Error(`caption track status ${response.status}`);
+  const body = await response.text();
+  if (!body.trim()) throw new Error('caption track returned an empty body');
+  const data = JSON.parse(body);
+  return (data.events || [])
+    .map((event) => (event.segs || []).map((s) => s.utf8 || '').join(''))
+    .map((text) => text.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+// Last resort: the transcript panel YouTube shows under the video on the web
+async function transcriptFromPanel(yt, videoId, lang) {
+  const info = await yt.getInfo(videoId);
   let transcriptInfo = await info.getTranscript();
   const wanted = transcriptInfo.languages.find((l) => l.toLowerCase().startsWith(lang === 'es' ? 'espa' : lang));
   if (wanted && wanted !== transcriptInfo.selectedLanguage) {
@@ -92,24 +129,6 @@ async function transcriptFromPanel(info, lang) {
   }
   const segments = transcriptInfo.transcript?.content?.body?.initial_segments || [];
   return segments.map((seg) => seg.snippet?.toString?.() || '').filter(Boolean);
-}
-
-// Fallback: download the caption track directly, preferring human captions over auto-generated
-async function transcriptFromCaptionTrack(info, lang) {
-  const tracks = info.captions?.caption_tracks || [];
-  const matching = tracks.filter((t) => t.language_code?.startsWith(lang));
-  const track = matching.find((t) => t.kind !== 'asr') || matching[0];
-  if (!track) return [];
-
-  const url = new URL(track.base_url);
-  url.searchParams.set('fmt', 'json3');
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Caption track status ${response.status}`);
-  const data = await response.json();
-  return (data.events || [])
-    .map((event) => (event.segs || []).map((s) => s.utf8 || '').join(''))
-    .map((text) => text.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
 }
 
 // Joins caption lines into readable paragraphs of roughly `target` characters,
@@ -131,25 +150,61 @@ function segmentsToParagraphs(segments, target = 450) {
   return paragraphs.join('\n\n');
 }
 
+// Downloads a transcript straight from YouTube, trying each client in turn.
+// Throws with every attempt's error so logs show whether YouTube blocked the request.
+async function downloadYoutubeTranscript(videoId, { lang = 'es' } = {}) {
+  const yt = await getInnertube();
+  const errors = [];
+
+  for (const client of CAPTION_CLIENTS) {
+    try {
+      const info = await yt.getBasicInfo(videoId, { client });
+      const status = info.playability_status?.status;
+      if (status && status !== 'OK') {
+        throw new Error(`${status}: ${info.playability_status?.reason || 'unplayable'}`);
+      }
+      const track = pickCaptionTrack(info, lang);
+      if (!track) throw new Error(`no "${lang}" caption track`);
+      const segments = await downloadCaptionTrack(track);
+      if (segments.length) return segmentsToParagraphs(segments);
+      throw new Error('caption track had no text');
+    } catch (err) {
+      errors.push(`${client}: ${err.message}`);
+    }
+  }
+
+  try {
+    const segments = await transcriptFromPanel(yt, videoId, lang);
+    if (segments.length) return segmentsToParagraphs(segments);
+    errors.push('panel: no segments');
+  } catch (err) {
+    errors.push(`panel: ${err.message}`);
+  }
+
+  throw new Error(`No transcript for ${videoId} (${errors.join('; ')})`);
+}
+
+// Transcripts never change, so they are cached in Firebase without expiry. The cache can
+// also be pre-filled from a machine YouTube doesn't block (see scripts/cache-youtube-transcripts.js).
 async function fetchYoutubeTranscript(url, { lang = 'es' } = {}) {
   const videoId = extractVideoId(url);
   if (!videoId) throw new Error('Not a YouTube video URL.');
 
-  const yt = await getInnertube();
-  const info = await yt.getInfo(videoId);
+  const key = `${TRANSCRIPT_CACHE_PATH}/${videoId}`;
+  const cached = await fbGet(key);
+  if (cached && cached.content) return cached.content;
 
-  let segments = [];
-  try {
-    segments = await transcriptFromPanel(info, lang);
-  } catch (err) {
-    console.warn(`Transcript panel unavailable for ${videoId}:`, err.message);
-  }
-  if (!segments.length) {
-    segments = await transcriptFromCaptionTrack(info, lang);
-  }
-  if (!segments.length) throw new Error('No transcript available for this video.');
-
-  return segmentsToParagraphs(segments);
+  const content = await downloadYoutubeTranscript(videoId, { lang });
+  await fbSet(key, { videoId, content, cached_at: Date.now() });
+  return content;
 }
 
-module.exports = { fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl, extractVideoId, segmentsToParagraphs };
+module.exports = {
+  SPANISH_YOUTUBE_CHANNELS,
+  fetchChannelVideos,
+  downloadYoutubeTranscript,
+  fetchYoutubeTranscript,
+  isYoutubeUrl,
+  extractVideoId,
+  segmentsToParagraphs,
+};

@@ -4,7 +4,8 @@
   "description": "A simple Express site with a daily song player and recent playlist sidebar.",
   "main": "api/index.js",
   "scripts": {
-    "start": "node api/index.js"
+    "start": "node api/index.js",
+    "cache-transcripts": "node scripts/cache-youtube-transcripts.js"
   },
   "keywords": ["music", "express", "player"],
   "author": "",

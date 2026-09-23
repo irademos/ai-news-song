@@ -4,7 +4,7 @@ const path = require('path');
 const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
-const { fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl } = require('./youtubeService');
+const { SPANISH_YOUTUBE_CHANNELS, fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl } = require('./youtubeService');
 const { translateStories, translateArticleBySentence } = require('./translationService');
 const { lookupWord } = require('./wordService');
 const { fbGet, fbSet, sanitizePath } = require('./firebaseService');
@@ -1322,11 +1322,6 @@ const SPANISH_SOURCES = [
   { url: 'https://laopinion.com/feed/', source: 'La Opinión', lang: 'es' },
   { url: 'https://www.democracynow.org/democracynow_spanish.xml', source: 'Democracy Now en Español', lang: 'es' },
   { url: 'https://cnnespanol.cnn.com/feed/', source: 'CNN en Español', lang: 'es' },
-];
-
-// YouTube channels whose video transcripts are read like articles
-const SPANISH_YOUTUBE_CHANNELS = [
-  { channelId: 'UCS0lmlVIYVz2qeWlZ_ynIWg', source: 'AJ+ Español', lang: 'es' },
 ];
 
 async function fetchSpanishSourceStories({ url, source, lang }) {
