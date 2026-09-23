@@ -1390,10 +1390,26 @@
       });
     }
 
+    // Round-robin stories across sources: BBC Mundo, La Opinión, NPR, ... then repeat.
+    function interleaveBySource(stories) {
+      const groups = new Map();
+      stories.forEach((s) => {
+        const key = s.source || '';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(s);
+      });
+      const queues = [...groups.values()];
+      const result = [];
+      for (let i = 0; result.length < stories.length; i++) {
+        queues.forEach((q) => { if (i < q.length) result.push(q[i]); });
+      }
+      return result;
+    }
+
     function renderStories() {
       const grid = document.getElementById('storyGrid');
       const filtered = activeSource === 'all'
-        ? allStories
+        ? interleaveBySource(allStories)
         : allStories.filter((s) => s.source === activeSource);
 
       if (!filtered.length) {
