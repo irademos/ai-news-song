@@ -6,6 +6,7 @@ const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
 const { SPANISH_YOUTUBE_CHANNELS, fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl } = require('./youtubeService');
 const { SPANISH_MEDIUM_CHANNELS, fetchMediumStories, fetchMediumArticle, isMediumUrl } = require('./mediumService');
+const { SPANISH_PODCAST_SOURCES, fetchPodcastStories } = require('./podcastService');
 const { archiveStories, listArchiveMonths, getArchiveMonth, MONTH_PATTERN } = require('./archiveService');
 const { translateStories, translateArticleBySentence } = require('./translationService');
 const { lookupWord } = require('./wordService');
@@ -1435,6 +1436,7 @@ app.get('/api/spanish-news', async (req, res) => {
       ...SPANISH_SOURCES.map(fetchSpanishSourceStories),
       ...SPANISH_YOUTUBE_CHANNELS.map((channel) => fetchChannelVideos(channel)),
       ...SPANISH_MEDIUM_CHANNELS.map((channel) => fetchMediumStories(channel)),
+      ...SPANISH_PODCAST_SOURCES.map((entry) => fetchPodcastStories(entry)),
     ]);
     const nativeSpanish = spanishResults.flat().filter((s) => s.headline);
     await archiveRecentStories(nativeSpanish);
