@@ -1,6 +1,5 @@
 const { fbGet, fbSet, sanitizePath } = require('./firebaseService');
-
-const MYMEMORY_URL = 'https://api.mymemory.translated.net/get';
+const { queryMyMemory } = require('./myMemoryClient');
 
 // Simple Spanish lemmatizer — maps inflected forms to a base form for cache keying.
 // Not exhaustive but covers the most common noun plural and adjective agreement endings.
@@ -33,10 +32,8 @@ async function lookupWord(word) {
 
   try {
     const lemma = getLemma(word.trim().toLowerCase());
-    const url = `${MYMEMORY_URL}?q=${encodeURIComponent(lemma)}&langpair=es|en`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'Daily-Spin/1.0' } });
-    if (!res.ok) return [];
-    const json = await res.json();
+    const json = await queryMyMemory(lemma, 'es|en');
+    if (!json) return [];
 
     const seen = new Set();
     const meanings = [];

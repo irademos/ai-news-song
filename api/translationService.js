@@ -1,6 +1,5 @@
 const { fbGet, fbSet, sanitizePath } = require('./firebaseService');
-
-const MYMEMORY_URL = 'https://api.mymemory.translated.net/get';
+const { queryMyMemory } = require('./myMemoryClient');
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 function storyCacheKey(story) {
@@ -36,31 +35,33 @@ async function translateArticleBySentence(articleText, { from = 'en', to = 'es' 
       results.push({ original: sentence, translated: cached.translated });
       continue;
     }
-    const translated = await translateText(sentence, { from, to });
-    fbSet(key, { translated, cached_at: Date.now() }).catch(() => {});
-    results.push({ original: sentence, translated });
+    const translated = await tryTranslate(sentence, { from, to });
+    if (translated) {
+      fbSet(key, { translated, cached_at: Date.now() }).catch(() => {});
+    }
+    results.push({ original: sentence, translated: translated ?? sentence });
   }
   return results;
 }
 
-async function translateText(text, { from = 'en', to = 'es' } = {}) {
-  if (!text || !text.trim()) return text;
+// Returns the translation, or null if MyMemory failed (so callers can skip caching it)
+async function tryTranslate(text, { from = 'en', to = 'es' } = {}) {
+  if (!text || !text.trim()) return null;
 
   try {
-    const url = `${MYMEMORY_URL}?q=${encodeURIComponent(text.slice(0, 500))}&langpair=${from}|${to}`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Daily-Spin/1.0' },
-    });
-    if (!res.ok) return text;
-    const json = await res.json();
+    const json = await queryMyMemory(text.slice(0, 500), `${from}|${to}`);
     const translated = json?.responseData?.translatedText;
     if (translated && typeof translated === 'string' && translated.trim()) {
       return translated.trim();
     }
   } catch {
-    // fall through to original
+    // fall through
   }
-  return text;
+  return null;
+}
+
+async function translateText(text, opts) {
+  return (await tryTranslate(text, opts)) ?? text;
 }
 
 async function translateStories(stories, { batchSize = 5 } = {}) {
@@ -86,14 +87,21 @@ async function translateStories(stories, { batchSize = 5 } = {}) {
         }
 
         const [headline, summary] = await Promise.all([
-          translateText(story.headline),
-          story.summary ? translateText(story.summary) : Promise.resolve(''),
+          tryTranslate(story.headline),
+          story.summary ? tryTranslate(story.summary) : Promise.resolve(''),
         ]);
 
-        // Cache in background
-        fbSet(key, { headline, summary, cached_at: Date.now() }).catch(() => {});
+        // Cache in background, but only complete translations so failures get retried
+        if (headline && (summary || !story.summary)) {
+          fbSet(key, { headline, summary, cached_at: Date.now() }).catch(() => {});
+        }
 
-        return { ...story, headline, summary, translated: true };
+        return {
+          ...story,
+          headline: headline ?? story.headline,
+          summary: summary ?? story.summary ?? '',
+          translated: true,
+        };
       }),
     );
     results.push(...translated);
