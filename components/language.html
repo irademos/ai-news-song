@@ -156,6 +156,12 @@
       flex-wrap: wrap;
       margin-bottom: .6rem;
     }
+    .transcript-note {
+      font-size: 0.85em;
+      font-style: italic;
+      opacity: 0.75;
+    }
+
     .source-chip {
       font-size: .75rem;
       font-weight: 700;
@@ -867,6 +873,18 @@
       } catch {
         // Fall back to summary if article fetch fails
         renderArticleText(body, story.summary || story.headline || '');
+        if (story.type === 'video') {
+          const note = document.createElement('p');
+          note.className = 'transcript-note';
+          note.append('Transcripción no disponible todavía. ');
+          const link = document.createElement('a');
+          link.href = story.link;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = 'Ver el video en YouTube';
+          note.append(link);
+          body.appendChild(note);
+        }
       }
       enableAudioBar(true);
     }
