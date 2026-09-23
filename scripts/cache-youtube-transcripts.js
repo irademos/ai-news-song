@@ -8,6 +8,7 @@
 //   npm run cache-transcripts                 # the channel's latest ~15 videos (RSS feed)
 //   npm run cache-transcripts -- --all        # every video on the channel (slow; resumable)
 //   npm run cache-transcripts -- --all --limit=200
+//   npm run cache-transcripts -- --all --retry-unavailable   # retry videos marked as having no transcript
 //
 // Every video it sees is also added to the site's archive (spanish_archive/<YYYY-MM>).
 //
@@ -40,9 +41,15 @@ const {
   parseRelativeDate,
 } = require('../api/youtubeService');
 
+// Flags can arrive as arguments or, when npm swallows them (e.g. PowerShell drops the `--`
+// in `npm run cache-transcripts -- --all`), as npm_config_* environment variables.
 const args = process.argv.slice(2);
-const ALL = args.includes('--all');
-const LIMIT = Number((args.find((a) => a.startsWith('--limit=')) || '').split('=')[1]) || Infinity;
+const ALL = args.includes('--all') || process.env.npm_config_all === 'true';
+// Retry videos previously recorded as having no transcript, ignoring the recheck wait
+const RETRY_UNAVAILABLE = args.includes('--retry-unavailable') || process.env.npm_config_retry_unavailable === 'true';
+const LIMIT = Number(
+  (args.find((a) => a.startsWith('--limit=')) || '').split('=')[1] || process.env.npm_config_limit,
+) || Infinity;
 // Pause between YouTube downloads so a long backfill doesn't get your IP rate limited
 const DELAY_MS = 2000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -101,7 +108,7 @@ async function main() {
         counts.skipped += 1;
         continue;
       }
-      if (existing && existing.unavailable && !shouldRecheck(existing, story.published_at)) {
+      if (existing && existing.unavailable && !RETRY_UNAVAILABLE && !shouldRecheck(existing, story.published_at)) {
         counts.skipped += 1;
         continue;
       }
@@ -123,7 +130,7 @@ async function main() {
         }
         await fbSet(key, { videoId, unavailable: true, reason: err.message.slice(0, 500), checked_at: Date.now() });
         counts.unavailable += 1;
-        console.warn(`  unavailable  ${videoId}  ${story.headline}`);
+        console.warn(`  unavailable  ${videoId}  ${story.headline}\n               ${err.message}`);
       }
       await sleep(DELAY_MS);
     }

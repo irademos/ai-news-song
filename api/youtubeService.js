@@ -87,7 +87,11 @@ function getInnertube() {
   if (!innertubePromise) {
     // youtubei.js is ESM-only, so load it with a dynamic import from this CommonJS module
     innertubePromise = import('youtubei.js')
-      .then(({ Innertube }) => Innertube.create({ lang: 'es', location: 'US', retrieve_player: false }))
+      .then(({ Innertube, Log }) => {
+        // Hide the library's parser warnings about page layouts it doesn't know yet (harmless)
+        Log.setLevel(Log.Level.ERROR);
+        return Innertube.create({ lang: 'es', location: 'US', retrieve_player: false });
+      })
       .catch((err) => {
         innertubePromise = null;
         throw err;
@@ -100,23 +104,45 @@ function getInnertube() {
 // that web caption URLs now require, and are blocked less often from server IPs.
 const CAPTION_CLIENTS = ['ANDROID', 'IOS', 'WEB'];
 
-// Picks the best caption track: human captions over auto-generated, in the wanted language
+// Picks the best caption track: human captions over auto-generated, in the wanted language.
+// If there is none, falls back to YouTube's machine translation of another track.
 function pickCaptionTrack(info, lang) {
   const tracks = info.captions?.caption_tracks || [];
   const matching = tracks.filter((t) => t.language_code?.startsWith(lang));
-  return matching.find((t) => t.kind !== 'asr') || matching[0] || null;
+  const track = matching.find((t) => t.kind !== 'asr') || matching[0];
+  if (track) return { url: track.base_url };
+
+  const canTranslate = (info.captions?.translation_languages || []).some((l) => l.language_code === lang);
+  const source = tracks.find((t) => t.is_translatable) || (canTranslate && tracks[0]);
+  if (!source) return null;
+  const url = new URL(source.base_url);
+  url.searchParams.set('tlang', lang);
+  return { url: url.toString() };
+}
+
+// Caption tracks come back as XML (<text> or <p> per line) or, if asked for, json3
+function parseCaptionBody(body) {
+  const trimmed = body.trim();
+  if (trimmed.startsWith('{')) {
+    return (JSON.parse(trimmed).events || [])
+      .map((event) => (event.segs || []).map((seg) => seg.utf8 || '').join(''));
+  }
+  const lines = [];
+  const linePattern = /<(text|p)\b[^>]*>([\s\S]*?)<\/\1>/g;
+  let match;
+  while ((match = linePattern.exec(trimmed)) !== null) {
+    // Lines are sometimes double-encoded (&amp;#39;), so decode twice
+    lines.push(decodeEntities(decodeEntities(match[2].replace(/<[^>]*>/g, ''))));
+  }
+  return lines;
 }
 
 async function downloadCaptionTrack(track) {
-  const url = new URL(track.base_url);
-  url.searchParams.set('fmt', 'json3');
-  const response = await fetch(url, { headers: { 'Accept-Language': 'es' } });
+  const response = await fetch(track.url, { headers: { 'Accept-Language': 'es' } });
   if (!response.ok) throw new Error(`caption track status ${response.status}`);
   const body = await response.text();
   if (!body.trim()) throw new Error('caption track returned an empty body');
-  const data = JSON.parse(body);
-  return (data.events || [])
-    .map((event) => (event.segs || []).map((s) => s.utf8 || '').join(''))
+  return parseCaptionBody(body)
     .map((text) => text.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
 }
@@ -173,7 +199,10 @@ async function downloadTranscriptWithInfo(videoId, { lang = 'es' } = {}) {
       const publishDate = Date.parse(info.page?.[0]?.microformat?.publish_date || '');
       if (Number.isFinite(publishDate)) publishedAt = publishDate;
       const track = pickCaptionTrack(info, lang);
-      if (!track) throw new Error(`no "${lang}" caption track`);
+      if (!track) {
+        const available = (info.captions?.caption_tracks || []).map((t) => t.language_code).join(', ');
+        throw new Error(`no "${lang}" caption track (available: ${available || 'none'})`);
+      }
       const segments = await downloadCaptionTrack(track);
       if (segments.length) return { content: segmentsToParagraphs(segments), publishedAt };
       throw new Error('caption track had no text');
@@ -271,6 +300,7 @@ module.exports = {
   downloadTranscriptWithInfo,
   listAllChannelVideos,
   parseRelativeDate,
+  parseCaptionBody,
   TRANSCRIPT_CACHE_PATH,
   fetchYoutubeTranscript,
   isYoutubeUrl,

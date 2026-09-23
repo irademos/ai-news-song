@@ -5,7 +5,8 @@
   "main": "api/index.js",
   "scripts": {
     "start": "node api/index.js",
-    "cache-transcripts": "node scripts/cache-youtube-transcripts.js"
+    "cache-transcripts": "node scripts/cache-youtube-transcripts.js",
+    "cache-transcripts:all": "node scripts/cache-youtube-transcripts.js --all"
   },
   "keywords": ["music", "express", "player"],
   "author": "",
