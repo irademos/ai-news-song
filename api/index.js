@@ -5,6 +5,7 @@ const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
 const { SPANISH_YOUTUBE_CHANNELS, fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl } = require('./youtubeService');
+const { archiveStories, listArchiveMonths, getArchiveMonth, MONTH_PATTERN } = require('./archiveService');
 const { translateStories, translateArticleBySentence } = require('./translationService');
 const { lookupWord } = require('./wordService');
 const { fbGet, fbSet, sanitizePath } = require('./firebaseService');
@@ -1379,7 +1380,9 @@ async function fetchSpanishSourceStories({ url, source, lang }) {
       const headline = stripHtml(extractTag(match[1], 'title'));
       const summary = stripHtml(extractTag(match[1], 'description'));
       const link = extractTag(match[1], 'link');
-      if (headline) items.push({ headline, summary, link, source, lang });
+      const published = Date.parse(extractTag(match[1], 'pubDate'));
+      const published_at = Number.isFinite(published) ? published : undefined;
+      if (headline) items.push({ headline, summary, link, source, lang, published_at });
     }
     return items;
   } catch (err) {
@@ -1387,6 +1390,34 @@ async function fetchSpanishSourceStories({ url, source, lang }) {
     return [];
   }
 }
+
+// Archive what the feeds currently show, at most once per ARCHIVE_INTERVAL_MS per server instance
+const ARCHIVE_INTERVAL_MS = 15 * 60 * 1000;
+let lastArchivedAt = 0;
+async function archiveRecentStories(stories) {
+  if (Date.now() - lastArchivedAt < ARCHIVE_INTERVAL_MS) return;
+  lastArchivedAt = Date.now();
+  try {
+    if (!(await archiveStories(stories))) lastArchivedAt = 0;
+  } catch (err) {
+    lastArchivedAt = 0;
+    console.error('Unable to archive Spanish stories:', err.message);
+  }
+}
+
+// GET /api/spanish-archive?month=YYYY-MM — archived Spanish stories and videos for one month
+// (defaults to the newest archived month), plus the list of months that have any.
+app.get('/api/spanish-archive', async (req, res) => {
+  try {
+    const months = await listArchiveMonths();
+    const requested = typeof req.query.month === 'string' ? req.query.month : '';
+    const month = MONTH_PATTERN.test(requested) ? requested : months[0];
+    const stories = month ? await getArchiveMonth(month) : [];
+    res.json({ month: month || null, months, stories });
+  } catch (error) {
+    res.status(502).json({ error: 'Unable to load the archive.', details: error.message });
+  }
+});
 
 app.get('/api/spanish-news', async (req, res) => {
   try {
@@ -1396,6 +1427,7 @@ app.get('/api/spanish-news', async (req, res) => {
       ...SPANISH_YOUTUBE_CHANNELS.map((channel) => fetchChannelVideos(channel)),
     ]);
     const nativeSpanish = spanishResults.flat().filter((s) => s.headline);
+    await archiveRecentStories(nativeSpanish);
 
     // Fetch English sources and translate a sample
     const englishStories = await fetchTopNews(30);

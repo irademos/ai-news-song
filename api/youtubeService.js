@@ -44,6 +44,7 @@ async function fetchChannelVideos({ channelId, source, lang = 'es', limit = 10 }
       if (!videoId || !headline) continue;
       // Keep only the first paragraph of the description; the rest is usually links/hashtags
       const summary = extractTag(entry, 'media:description').split(/\n\s*\n/)[0].replace(/\s+/g, ' ').trim();
+      const published = Date.parse(extractTag(entry, 'published'));
       items.push({
         headline,
         summary,
@@ -51,6 +52,7 @@ async function fetchChannelVideos({ channelId, source, lang = 'es', limit = 10 }
         source,
         lang,
         type: 'video',
+        published_at: Number.isFinite(published) ? published : undefined,
       });
     }
     return items;
@@ -150,42 +152,57 @@ function segmentsToParagraphs(segments, target = 450) {
   return paragraphs.join('\n\n');
 }
 
-// Downloads a transcript straight from YouTube, trying each client in turn.
-// Throws with every attempt's error so logs show whether YouTube blocked the request.
-async function downloadYoutubeTranscript(videoId, { lang = 'es' } = {}) {
+// Downloads a transcript straight from YouTube, trying each client in turn. Resolves to
+// { content, publishedAt }. On failure the error lists every attempt so logs show the cause,
+// and `error.blocked` is true when YouTube refused the request (bot check / rate limit)
+// rather than the video simply having no captions.
+async function downloadTranscriptWithInfo(videoId, { lang = 'es' } = {}) {
   const yt = await getInnertube();
   const errors = [];
+  let blocked = false;
+  let publishedAt;
 
   for (const client of CAPTION_CLIENTS) {
     try {
       const info = await yt.getBasicInfo(videoId, { client });
       const status = info.playability_status?.status;
       if (status && status !== 'OK') {
+        if (status === 'LOGIN_REQUIRED') blocked = true;
         throw new Error(`${status}: ${info.playability_status?.reason || 'unplayable'}`);
       }
+      const publishDate = Date.parse(info.page?.[0]?.microformat?.publish_date || '');
+      if (Number.isFinite(publishDate)) publishedAt = publishDate;
       const track = pickCaptionTrack(info, lang);
       if (!track) throw new Error(`no "${lang}" caption track`);
       const segments = await downloadCaptionTrack(track);
-      if (segments.length) return segmentsToParagraphs(segments);
+      if (segments.length) return { content: segmentsToParagraphs(segments), publishedAt };
       throw new Error('caption track had no text');
     } catch (err) {
+      if (/status code (403|429)/.test(err.message)) blocked = true;
       errors.push(`${client}: ${err.message}`);
     }
   }
 
   try {
     const segments = await transcriptFromPanel(yt, videoId, lang);
-    if (segments.length) return segmentsToParagraphs(segments);
+    if (segments.length) return { content: segmentsToParagraphs(segments), publishedAt };
     errors.push('panel: no segments');
   } catch (err) {
     errors.push(`panel: ${err.message}`);
   }
 
-  throw new Error(`No transcript for ${videoId} (${errors.join('; ')})`);
+  const error = new Error(`No transcript for ${videoId} (${errors.join('; ')})`);
+  error.blocked = blocked;
+  throw error;
+}
+
+async function downloadYoutubeTranscript(videoId, options) {
+  return (await downloadTranscriptWithInfo(videoId, options)).content;
 }
 
 // Transcripts never change, so they are cached in Firebase without expiry. The cache can
-// also be pre-filled from a machine YouTube doesn't block (see scripts/cache-youtube-transcripts.js).
+// also be pre-filled from a machine YouTube doesn't block (see scripts/cache-youtube-transcripts.js),
+// which also records videos that have no transcript as { unavailable: true }.
 async function fetchYoutubeTranscript(url, { lang = 'es' } = {}) {
   const videoId = extractVideoId(url);
   if (!videoId) throw new Error('Not a YouTube video URL.');
@@ -193,16 +210,68 @@ async function fetchYoutubeTranscript(url, { lang = 'es' } = {}) {
   const key = `${TRANSCRIPT_CACHE_PATH}/${videoId}`;
   const cached = await fbGet(key);
   if (cached && cached.content) return cached.content;
+  if (cached && cached.unavailable) throw new Error(`No transcript available for ${videoId}.`);
 
   const content = await downloadYoutubeTranscript(videoId, { lang });
   await fbSet(key, { videoId, content, cached_at: Date.now() });
   return content;
 }
 
+const RELATIVE_UNITS_MS = [
+  [/^(segundo|second)/, 1000],
+  [/^(minuto|minute)/, 60 * 1000],
+  [/^(hora|hour)/, 60 * 60 * 1000],
+  [/^(d[ií]a|day)/, 24 * 60 * 60 * 1000],
+  [/^(semana|week)/, 7 * 24 * 60 * 60 * 1000],
+  [/^(mes|month)/, 30 * 24 * 60 * 60 * 1000],
+  [/^(a[ñn]o|year)/, 365 * 24 * 60 * 60 * 1000],
+];
+
+// Turns "hace 3 años" / "3 years ago" into an approximate timestamp
+function parseRelativeDate(text, now = Date.now()) {
+  const match = String(text || '').toLowerCase().match(/(\d+)\s+([a-zñí]+)/);
+  if (!match) return undefined;
+  const unit = RELATIVE_UNITS_MS.find(([pattern]) => pattern.test(match[2]));
+  return unit ? now - Number(match[1]) * unit[1] : undefined;
+}
+
+// Walks a channel's entire Videos tab, newest first, yielding
+// { videoId, headline, summary, publishedText } for each upload.
+async function* listAllChannelVideos(channelId) {
+  const yt = await getInnertube();
+  const channel = await yt.getChannel(channelId);
+  let feed = await channel.getVideos();
+  const seen = new Set();
+
+  while (feed) {
+    for (const item of feed.videos) {
+      const videoId = item.video_id || item.content_id || item.id;
+      if (!videoId || seen.has(videoId)) continue;
+      seen.add(videoId);
+
+      // Newer layouts (LockupView) keep the title and "hace N días" text in metadata rows
+      const rowTexts = (item.metadata?.metadata?.metadata_rows || [])
+        .flatMap((row) => row.metadata_parts || [])
+        .map((part) => part.text?.toString?.() || '');
+      yield {
+        videoId,
+        headline: (item.title || item.metadata?.title)?.toString?.() || '',
+        summary: item.description_snippet?.toString?.() || '',
+        publishedText: item.published?.toString?.() || rowTexts.find((t) => /\d/.test(t) && /hace|ago/i.test(t)) || '',
+      };
+    }
+    feed = feed.has_continuation ? await feed.getContinuation() : null;
+  }
+}
+
 module.exports = {
   SPANISH_YOUTUBE_CHANNELS,
   fetchChannelVideos,
   downloadYoutubeTranscript,
+  downloadTranscriptWithInfo,
+  listAllChannelVideos,
+  parseRelativeDate,
+  TRANSCRIPT_CACHE_PATH,
   fetchYoutubeTranscript,
   isYoutubeUrl,
   extractVideoId,

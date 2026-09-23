@@ -114,6 +114,27 @@
       color: var(--text);
     }
 
+    /* Latest / archive toggle */
+    .view-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .5rem;
+      margin-bottom: .9rem;
+    }
+    .archive-month {
+      background: rgba(15,23,42,.7);
+      border: 1px solid rgba(148,163,184,.3);
+      border-radius: 999px;
+      color: var(--text);
+      font-size: .85rem;
+      padding: .4rem .9rem;
+    }
+    .story-date {
+      color: var(--muted);
+      font-size: .8rem;
+    }
+
     /* Story grid */
     .story-grid {
       display: grid;
@@ -696,6 +717,12 @@
         </p>
       </header>
 
+      <div class="view-bar" id="viewBar">
+        <button class="source-tab active" type="button" data-view="latest">Últimas noticias</button>
+        <button class="source-tab" type="button" data-view="archive">🗂️ Archivo</button>
+        <select class="archive-month" id="archiveMonth" aria-label="Mes del archivo" hidden></select>
+      </div>
+
       <div class="source-tabs" id="sourceTabs">
         <button class="source-tab active" data-source="all">Todas las fuentes</button>
       </div>
@@ -782,6 +809,7 @@
   <script type="module">
     let allStories = [];
     let activeSource = 'all';
+    let viewMode = 'latest'; // 'latest' | 'archive'
     let currentStory = null;
     let activeWordEl = null;
     // Map from sentence index to {original, translated} for translated articles
@@ -1382,6 +1410,7 @@
         const res = await fetch('/api/spanish-news');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const { stories } = await res.json();
+        if (viewMode !== 'latest') return;
         allStories = stories || [];
         buildSourceTabs();
         renderStories();
@@ -1390,9 +1419,64 @@
       }
     }
 
+    // ── Latest / archive toggle ─────────────────────────────────
+    function setViewMode(mode) {
+      viewMode = mode;
+      document.querySelectorAll('#viewBar [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === mode));
+      document.getElementById('archiveMonth').hidden = mode !== 'archive';
+      if (mode === 'archive') loadArchive();
+      else loadStories();
+    }
+
+    function formatMonth(month) {
+      const [year, m] = month.split('-').map(Number);
+      const label = new Date(Date.UTC(year, m - 1, 15)).toLocaleDateString('es', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      return label.charAt(0).toUpperCase() + label.slice(1);
+    }
+
+    async function loadArchive(month) {
+      const grid = document.getElementById('storyGrid');
+      const select = document.getElementById('archiveMonth');
+      grid.innerHTML = '<div class="status-msg"><div class="spinner"></div><br>Cargando archivo…</div>';
+      try {
+        const res = await fetch(`/api/spanish-archive${month ? `?month=${encodeURIComponent(month)}` : ''}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (viewMode !== 'archive') return;
+
+        select.innerHTML = '';
+        (data.months || []).forEach((m) => {
+          const option = document.createElement('option');
+          option.value = m;
+          option.textContent = formatMonth(m);
+          option.selected = m === data.month;
+          select.appendChild(option);
+        });
+
+        allStories = data.stories || [];
+        if (!allStories.length) {
+          buildSourceTabs();
+          grid.innerHTML = '<div class="status-msg">El archivo todavía está vacío. Las noticias se guardan a medida que aparecen.</div>';
+          return;
+        }
+        buildSourceTabs();
+        renderStories();
+      } catch (err) {
+        grid.innerHTML = `<div class="status-msg">Error al cargar el archivo: ${err.message}</div>`;
+      }
+    }
+
+    document.querySelectorAll('#viewBar [data-view]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (btn.dataset.view !== viewMode) setViewMode(btn.dataset.view);
+      });
+    });
+    document.getElementById('archiveMonth').addEventListener('change', (e) => loadArchive(e.target.value));
+
     function buildSourceTabs() {
       const tabs = document.getElementById('sourceTabs');
       const sources = ['all', ...new Set(allStories.map((s) => s.source).filter(Boolean))];
+      if (!sources.includes(activeSource)) activeSource = 'all';
       tabs.innerHTML = '';
       sources.forEach((src) => {
         const btn = document.createElement('button');
@@ -1426,8 +1510,9 @@
 
     function renderStories() {
       const grid = document.getElementById('storyGrid');
+      // The archive is already newest-first, so keep it chronological
       const filtered = activeSource === 'all'
-        ? interleaveBySource(allStories)
+        ? (viewMode === 'archive' ? allStories : interleaveBySource(allStories))
         : allStories.filter((s) => s.source === activeSource);
 
       if (!filtered.length) {
@@ -1450,6 +1535,9 @@
           isNative
             ? '<span class="native-badge">Original ES</span>'
             : '<span class="translated-badge">Traducido</span>',
+          story.published_at
+            ? `<span class="story-date">${new Date(story.published_at).toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' })}</span>`
+            : '',
         ].join('');
 
         card.innerHTML = `<div class="story-card__meta">${metaBadges}</div>`;
@@ -1469,7 +1557,7 @@
         const openBtn = document.createElement('button');
         openBtn.className = 'story-card__open';
         openBtn.type = 'button';
-        openBtn.textContent = 'Leer artículo completo →';
+        openBtn.textContent = story.type === 'video' ? 'Leer transcripción del video →' : 'Leer artículo completo →';
         openBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           closeWordPopup();
