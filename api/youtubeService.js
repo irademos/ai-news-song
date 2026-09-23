@@ -179,13 +179,14 @@ function segmentsToParagraphs(segments, target = 450) {
 }
 
 // Downloads a transcript straight from YouTube, trying each client in turn. Resolves to
-// { content, publishedAt }. On failure the error lists every attempt so logs show the cause,
-// and `error.blocked` is true when YouTube refused the request (bot check / rate limit)
-// rather than the video simply having no captions.
+// { content, publishedAt }. On failure the error lists every attempt so logs show the cause.
+// `error.blocked` is true when YouTube refused the request (bot check / rate limit), and
+// `error.noCaptions` only when YouTube confirmed the video has no usable caption track.
 async function downloadTranscriptWithInfo(videoId, { lang = 'es' } = {}) {
   const yt = await getInnertube();
   const errors = [];
   let blocked = false;
+  let noCaptions = false;
   let publishedAt;
 
   for (const client of CAPTION_CLIENTS) {
@@ -201,27 +202,35 @@ async function downloadTranscriptWithInfo(videoId, { lang = 'es' } = {}) {
       const track = pickCaptionTrack(info, lang);
       if (!track) {
         const available = (info.captions?.caption_tracks || []).map((t) => t.language_code).join(', ');
+        noCaptions = true;
         throw new Error(`no "${lang}" caption track (available: ${available || 'none'})`);
       }
       const segments = await downloadCaptionTrack(track);
       if (segments.length) return { content: segmentsToParagraphs(segments), publishedAt };
       throw new Error('caption track had no text');
     } catch (err) {
-      if (/status code (403|429)/.test(err.message)) blocked = true;
       errors.push(`${client}: ${err.message}`);
+      // Caption downloads all hit the same endpoint, so once it rate limits us, stop asking
+      if (/status (code )?(403|429)\b/.test(err.message)) {
+        blocked = true;
+        break;
+      }
     }
   }
 
-  try {
-    const segments = await transcriptFromPanel(yt, videoId, lang);
-    if (segments.length) return { content: segmentsToParagraphs(segments), publishedAt };
-    errors.push('panel: no segments');
-  } catch (err) {
-    errors.push(`panel: ${err.message}`);
+  if (!blocked) {
+    try {
+      const segments = await transcriptFromPanel(yt, videoId, lang);
+      if (segments.length) return { content: segmentsToParagraphs(segments), publishedAt };
+      errors.push('panel: no segments');
+    } catch (err) {
+      errors.push(`panel: ${err.message}`);
+    }
   }
 
   const error = new Error(`No transcript for ${videoId} (${errors.join('; ')})`);
   error.blocked = blocked;
+  error.noCaptions = noCaptions && !blocked;
   throw error;
 }
 

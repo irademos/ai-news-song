@@ -49,7 +49,7 @@ npm run cache-transcripts:all -- --limit=200
 npm run cache-transcripts:all -- --retry-unavailable   # retry videos previously marked as having no transcript
 ```
 
-`--all` pauses 2 seconds between videos and skips anything already cached, so it can be stopped and re-run to resume. Videos without Spanish captions are recorded and rechecked later (after 12 hours for videos under two weeks old, otherwise after 30 days). If YouTube starts blocking the machine, the run stops.
+`--all` pauses 5–10 seconds between videos and skips anything already cached, so it can be stopped and re-run to resume. Videos without Spanish captions are recorded and rechecked later (after 12 hours for videos under two weeks old, otherwise after 30 days). If YouTube starts rate limiting the machine (HTTP 429), the run stops; wait a few hours and run it again. Other failures are not recorded, so they are retried on the next run.
 
 To run it every 3 hours on Windows (output goes to `cache-transcripts.log`):
 
