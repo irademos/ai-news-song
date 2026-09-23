@@ -125,16 +125,29 @@
       border: 1px solid rgba(148,163,184,.15);
       border-radius: 18px;
       padding: 1.25rem 1.4rem;
-      transition: border-color .2s, transform .15s;
-      cursor: pointer;
-      text-decoration: none;
+      transition: border-color .2s;
       color: inherit;
       display: block;
     }
     .story-card:hover {
       border-color: rgba(245,158,11,.45);
-      transform: translateY(-2px);
     }
+    .story-card__open {
+      margin-top: .85rem;
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+      padding: .4rem .9rem;
+      border-radius: 999px;
+      border: 1px solid rgba(245,158,11,.45);
+      background: rgba(245,158,11,.12);
+      color: var(--accent);
+      font-size: .82rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .story-card__open:hover { background: rgba(245,158,11,.25); }
 
     .story-card__meta {
       display: flex;
@@ -1021,7 +1034,7 @@
 
     function updateMouseSelection(endWord) {
       if (!mouseSelectStart || !endWord) return;
-      const all = getAllArticleWords();
+      const all = getSelectableWords(mouseSelectStart);
       const si = all.indexOf(mouseSelectStart);
       const ei = all.indexOf(endWord);
       if (si === -1 || ei === -1) return;
@@ -1099,7 +1112,11 @@
     let touchSelectStartWord = null;
     let touchSelectedWords = [];
 
-    function getAllArticleWords() {
+    // Words that can be range-selected together with startWord:
+    // within the same story card in the list view, or across the article view.
+    function getSelectableWords(startWord) {
+      const card = startWord?.closest('.story-card');
+      if (card) return [...card.querySelectorAll('.word')];
       return [...document.querySelectorAll('#articleHeadline .word, #articleBody .word')];
     }
 
@@ -1115,7 +1132,7 @@
 
     function applyTouchSelectionRange(endWord) {
       if (!touchSelectStartWord || !endWord) return;
-      const all = getAllArticleWords();
+      const all = getSelectableWords(touchSelectStartWord);
       const si = all.indexOf(touchSelectStartWord);
       const ei = all.indexOf(endWord);
       if (si === -1 || ei === -1) return;
@@ -1393,8 +1410,6 @@
 
         const card = document.createElement('div');
         card.className = 'story-card';
-        card.setAttribute('role', 'button');
-        card.setAttribute('tabindex', '0');
 
         const metaBadges = [
           source ? `<span class="source-chip">${source}</span>` : '',
@@ -1403,14 +1418,32 @@
             : '<span class="translated-badge">Traducido</span>',
         ].join('');
 
-        card.innerHTML = `
-          <div class="story-card__meta">${metaBadges}</div>
-          <div class="story-card__headline">${headline}</div>
-          ${summary ? `<div class="story-card__summary">${summary}</div>` : ''}
-        `;
+        card.innerHTML = `<div class="story-card__meta">${metaBadges}</div>`;
 
-        card.addEventListener('click', () => showArticle(story));
-        card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') showArticle(story); });
+        const headlineEl = document.createElement('div');
+        headlineEl.className = 'story-card__headline';
+        tokenizeParagraph(headlineEl, headline, null);
+        card.appendChild(headlineEl);
+
+        if (summary) {
+          const summaryEl = document.createElement('div');
+          summaryEl.className = 'story-card__summary';
+          tokenizeParagraph(summaryEl, summary, null);
+          card.appendChild(summaryEl);
+        }
+
+        const openBtn = document.createElement('button');
+        openBtn.className = 'story-card__open';
+        openBtn.type = 'button';
+        openBtn.textContent = 'Leer artículo completo →';
+        openBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeWordPopup();
+          closePhrasePopup();
+          showArticle(story);
+        });
+        card.appendChild(openBtn);
+
         grid.appendChild(card);
       });
     }
