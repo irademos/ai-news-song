@@ -31,3 +31,13 @@ Update the array in [`api/index.js`](api/index.js) to adjust the tracks, descrip
 - `description` – Short blurb rendered beneath the player
 
 The front-end automatically refreshes when reloading the page, so no extra build steps are required after editing the list.
+
+## YouTube transcripts on the Spanish page
+
+Videos from the channels in `SPANISH_YOUTUBE_CHANNELS` (`api/youtubeService.js`) are listed alongside the Spanish news feeds, and their transcripts are shown as the article text. Transcripts are cached in Firebase under `youtube_transcripts/` without expiry.
+
+YouTube often blocks transcript requests from cloud hosts like Vercel. To work around this, pre-fill the cache from a home connection, ideally on a schedule (cron / Task Scheduler):
+
+```bash
+FIREBASE_DATABASE_URL=https://<project>.firebaseio.com npm run cache-transcripts
+```

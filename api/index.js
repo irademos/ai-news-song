@@ -4,6 +4,7 @@ const path = require('path');
 const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
+const { SPANISH_YOUTUBE_CHANNELS, fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl } = require('./youtubeService');
 const { translateStories, translateArticleBySentence } = require('./translationService');
 const { lookupWord } = require('./wordService');
 const { fbGet, fbSet, sanitizePath } = require('./firebaseService');
@@ -1298,7 +1299,7 @@ app.get('/api/spanish-article', async (req, res) => {
   }
 
   try {
-    const content = await fetchArticleContent(url);
+    const content = isYoutubeUrl(url) ? await fetchYoutubeTranscript(url) : await fetchArticleContent(url);
     if (!content) return res.status(404).json({ error: 'No readable content found.' });
     fbSet(key, { content, cached_at: Date.now() }).catch(() => {});
 
@@ -1312,6 +1313,7 @@ app.get('/api/spanish-article', async (req, res) => {
     }
     res.json({ content, fromCache: false });
   } catch (error) {
+    console.error(`Unable to fetch article ${url}:`, error.message);
     res.status(502).json({ error: 'Unable to fetch article.', details: error.message });
   }
 });
@@ -1389,7 +1391,10 @@ async function fetchSpanishSourceStories({ url, source, lang }) {
 app.get('/api/spanish-news', async (req, res) => {
   try {
     // Fetch native Spanish sources
-    const spanishResults = await Promise.all(SPANISH_SOURCES.map(fetchSpanishSourceStories));
+    const spanishResults = await Promise.all([
+      ...SPANISH_SOURCES.map(fetchSpanishSourceStories),
+      ...SPANISH_YOUTUBE_CHANNELS.map((channel) => fetchChannelVideos(channel)),
+    ]);
     const nativeSpanish = spanishResults.flat().filter((s) => s.headline);
 
     // Fetch English sources and translate a sample
