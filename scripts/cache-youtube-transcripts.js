@@ -50,8 +50,9 @@ const RETRY_UNAVAILABLE = args.includes('--retry-unavailable') || process.env.np
 const LIMIT = Number(
   (args.find((a) => a.startsWith('--limit=')) || '').split('=')[1] || process.env.npm_config_limit,
 ) || Infinity;
-// Pause between YouTube downloads so a long backfill doesn't get your IP rate limited
-const DELAY_MS = 2000;
+// Pause between YouTube downloads (plus random jitter) so a long backfill doesn't get
+// your IP rate limited
+const DELAY_MS = 5000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -91,10 +92,12 @@ async function main() {
     process.exit(1);
   }
 
-  const counts = { cached: 0, unavailable: 0, skipped: 0 };
+  const counts = { cached: 0, unavailable: 0, failed: 0, skipped: 0 };
+  let stopped = false;
   let downloads = 0;
 
   for (const channel of SPANISH_YOUTUBE_CHANNELS) {
+    if (stopped) break;
     console.log(`${channel.source}: ${ALL ? 'all videos' : 'latest videos'}`);
 
     for await (const { videoId, story } of videosFor(channel)) {
@@ -125,20 +128,30 @@ async function main() {
         console.log(`  cached       ${videoId}  ${story.headline}`);
       } catch (err) {
         if (err.blocked) {
-          console.error(`  YouTube is blocking requests from this machine; stopping. ${err.message}`);
+          console.error(
+            '  YouTube is rate limiting this machine (429/403); stopping. Wait a few hours and run again.\n' +
+              `  ${err.message}`,
+          );
+          stopped = true;
           break;
         }
-        await fbSet(key, { videoId, unavailable: true, reason: err.message.slice(0, 500), checked_at: Date.now() });
-        counts.unavailable += 1;
-        console.warn(`  unavailable  ${videoId}  ${story.headline}\n               ${err.message}`);
+        if (!err.noCaptions) {
+          // Unclear failure: don't record it, so the next run simply tries again
+          counts.failed += 1;
+          console.warn(`  failed       ${videoId}  ${story.headline}\n               ${err.message}`);
+        } else {
+          await fbSet(key, { videoId, unavailable: true, reason: err.message.slice(0, 500), checked_at: Date.now() });
+          counts.unavailable += 1;
+          console.warn(`  unavailable  ${videoId}  ${story.headline}\n               ${err.message}`);
+        }
       }
-      await sleep(DELAY_MS);
+      await sleep(DELAY_MS + Math.random() * DELAY_MS);
     }
   }
 
   console.log(
     `${new Date().toISOString()} Done: ${counts.cached} new transcripts cached, ` +
-      `${counts.unavailable} unavailable, ${counts.skipped} already done.`,
+      `${counts.unavailable} without captions, ${counts.failed} failed (will retry), ${counts.skipped} already done.`,
   );
 }
 
