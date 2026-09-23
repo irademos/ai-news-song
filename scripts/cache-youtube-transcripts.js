@@ -40,9 +40,13 @@ const {
   parseRelativeDate,
 } = require('../api/youtubeService');
 
+// Flags can arrive as arguments or, when npm swallows them (e.g. PowerShell drops the `--`
+// in `npm run cache-transcripts -- --all`), as npm_config_* environment variables.
 const args = process.argv.slice(2);
-const ALL = args.includes('--all');
-const LIMIT = Number((args.find((a) => a.startsWith('--limit=')) || '').split('=')[1]) || Infinity;
+const ALL = args.includes('--all') || process.env.npm_config_all === 'true';
+const LIMIT = Number(
+  (args.find((a) => a.startsWith('--limit=')) || '').split('=')[1] || process.env.npm_config_limit,
+) || Infinity;
 // Pause between YouTube downloads so a long backfill doesn't get your IP rate limited
 const DELAY_MS = 2000;
 const DAY_MS = 24 * 60 * 60 * 1000;

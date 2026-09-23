@@ -44,8 +44,8 @@ YouTube often blocks transcript requests from cloud hosts like Vercel. To work a
 
 ```bash
 npm run cache-transcripts                  # latest ~15 videos per channel
-npm run cache-transcripts -- --all         # every video on the channel (one-time backfill)
-npm run cache-transcripts -- --all --limit=200
+npm run cache-transcripts:all              # every video on the channel (one-time backfill)
+npm run cache-transcripts:all -- --limit=200
 ```
 
 `--all` pauses 2 seconds between videos and skips anything already cached, so it can be stopped and re-run to resume. Videos without Spanish captions are recorded and rechecked later (after 12 hours for videos under two weeks old, otherwise after 30 days). If YouTube starts blocking the machine, the run stops.
