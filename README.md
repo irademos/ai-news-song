@@ -32,6 +32,10 @@ Update the array in [`api/index.js`](api/index.js) to adjust the tracks, descrip
 
 The front-end automatically refreshes when reloading the page, so no extra build steps are required after editing the list.
 
+## Spanish archive
+
+The Spanish page's **Archivo** button browses older stories and videos month by month. Stories from the Spanish RSS feeds are saved to Firebase under `spanish_archive/<YYYY-MM>/` as the feeds are loaded (at most every 15 minutes), and the transcript script adds every video it processes. Translated English stories are not archived.
+
 ## YouTube transcripts on the Spanish page
 
 Videos from the channels in `SPANISH_YOUTUBE_CHANNELS` (`api/youtubeService.js`) are listed alongside the Spanish news feeds, and their transcripts are shown as the article text. Transcripts are cached in Firebase under `youtube_transcripts/` without expiry.
@@ -39,8 +43,12 @@ Videos from the channels in `SPANISH_YOUTUBE_CHANNELS` (`api/youtubeService.js`)
 YouTube often blocks transcript requests from cloud hosts like Vercel. To work around this, pre-fill the cache from a home connection. Put `FIREBASE_DATABASE_URL=https://<project>.firebaseio.com` in `.env`, then run:
 
 ```bash
-npm run cache-transcripts
+npm run cache-transcripts                  # latest ~15 videos per channel
+npm run cache-transcripts -- --all         # every video on the channel (one-time backfill)
+npm run cache-transcripts -- --all --limit=200
 ```
+
+`--all` pauses 2 seconds between videos and skips anything already cached, so it can be stopped and re-run to resume. Videos without Spanish captions are recorded and rechecked later (after 12 hours for videos under two weeks old, otherwise after 30 days). If YouTube starts blocking the machine, the run stops.
 
 To run it every 3 hours on Windows (output goes to `cache-transcripts.log`):
 

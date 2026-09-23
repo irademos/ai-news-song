@@ -5,7 +5,11 @@
 // home connections. Run this from your own computer (e.g. on a schedule) and the site will
 // serve the cached transcripts without ever calling YouTube itself:
 //
-//   npm run cache-transcripts
+//   npm run cache-transcripts                 # the channel's latest ~15 videos (RSS feed)
+//   npm run cache-transcripts -- --all        # every video on the channel (slow; resumable)
+//   npm run cache-transcripts -- --all --limit=200
+//
+// Every video it sees is also added to the site's archive (spanish_archive/<YYYY-MM>).
 //
 // FIREBASE_DATABASE_URL is read from the environment, or from the repo's .env file.
 // On Windows, scripts/cache-transcripts.cmd wraps this for Task Scheduler.
@@ -25,12 +29,54 @@ if (fs.existsSync(envFile)) {
 }
 
 const { fbGet, fbSet } = require('../api/firebaseService');
+const { archiveStories } = require('../api/archiveService');
 const {
   SPANISH_YOUTUBE_CHANNELS,
+  TRANSCRIPT_CACHE_PATH,
   fetchChannelVideos,
-  downloadYoutubeTranscript,
+  listAllChannelVideos,
+  downloadTranscriptWithInfo,
   extractVideoId,
+  parseRelativeDate,
 } = require('../api/youtubeService');
+
+const args = process.argv.slice(2);
+const ALL = args.includes('--all');
+const LIMIT = Number((args.find((a) => a.startsWith('--limit=')) || '').split('=')[1]) || Infinity;
+// Pause between YouTube downloads so a long backfill doesn't get your IP rate limited
+const DELAY_MS = 2000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// New uploads often get auto-captions a few hours later, so recheck those sooner
+function shouldRecheck(record, publishedAt) {
+  const age = Date.now() - (publishedAt || 0);
+  const wait = age < 14 * DAY_MS ? DAY_MS / 2 : 30 * DAY_MS;
+  return Date.now() - (record.checked_at || 0) > wait;
+}
+
+async function* videosFor(channel) {
+  if (ALL) {
+    for await (const video of listAllChannelVideos(channel.channelId)) {
+      yield {
+        videoId: video.videoId,
+        story: {
+          headline: video.headline,
+          summary: video.summary,
+          link: `https://www.youtube.com/watch?v=${video.videoId}`,
+          source: channel.source,
+          lang: channel.lang,
+          type: 'video',
+          published_at: parseRelativeDate(video.publishedText),
+        },
+      };
+    }
+    return;
+  }
+  const videos = await fetchChannelVideos({ ...channel, limit: 15 });
+  for (const story of videos) yield { videoId: extractVideoId(story.link), story };
+}
 
 async function main() {
   if (!process.env.FIREBASE_DATABASE_URL) {
@@ -38,32 +84,55 @@ async function main() {
     process.exit(1);
   }
 
-  let cached = 0;
-  let failed = 0;
+  const counts = { cached: 0, unavailable: 0, skipped: 0 };
+  let downloads = 0;
+
   for (const channel of SPANISH_YOUTUBE_CHANNELS) {
-    const videos = await fetchChannelVideos({ ...channel, limit: 15 });
-    console.log(`${channel.source}: ${videos.length} recent videos`);
+    console.log(`${channel.source}: ${ALL ? 'all videos' : 'latest videos'}`);
 
-    for (const video of videos) {
-      const videoId = extractVideoId(video.link);
-      const key = `youtube_transcripts/${videoId}`;
+    for await (const { videoId, story } of videosFor(channel)) {
+      if (downloads >= LIMIT) break;
+      const key = `${TRANSCRIPT_CACHE_PATH}/${videoId}`;
       const existing = await fbGet(key);
-      if (existing && existing.content) continue;
 
-      try {
-        const content = await downloadYoutubeTranscript(videoId, { lang: channel.lang });
-        const saved = await fbSet(key, { videoId, content, cached_at: Date.now() });
-        if (!saved) throw new Error('Firebase write failed');
-        cached += 1;
-        console.log(`  cached   ${videoId}  ${video.headline}`);
-      } catch (err) {
-        failed += 1;
-        console.warn(`  skipped  ${videoId}  ${err.message}`);
+      if (existing && existing.content) {
+        // Exact publish date from an earlier download beats the "hace N meses" estimate
+        await archiveStories([{ ...story, published_at: existing.published_at || story.published_at }]);
+        counts.skipped += 1;
+        continue;
       }
+      if (existing && existing.unavailable && !shouldRecheck(existing, story.published_at)) {
+        counts.skipped += 1;
+        continue;
+      }
+
+      downloads += 1;
+      try {
+        const { content, publishedAt } = await downloadTranscriptWithInfo(videoId, { lang: channel.lang });
+        const published_at = publishedAt || story.published_at;
+        if (!(await fbSet(key, { videoId, content, published_at, cached_at: Date.now() }))) {
+          throw new Error('Firebase write failed');
+        }
+        await archiveStories([{ ...story, published_at }]);
+        counts.cached += 1;
+        console.log(`  cached       ${videoId}  ${story.headline}`);
+      } catch (err) {
+        if (err.blocked) {
+          console.error(`  YouTube is blocking requests from this machine; stopping. ${err.message}`);
+          break;
+        }
+        await fbSet(key, { videoId, unavailable: true, reason: err.message.slice(0, 500), checked_at: Date.now() });
+        counts.unavailable += 1;
+        console.warn(`  unavailable  ${videoId}  ${story.headline}`);
+      }
+      await sleep(DELAY_MS);
     }
   }
 
-  console.log(`${new Date().toISOString()} Done: ${cached} new transcripts cached, ${failed} unavailable.`);
+  console.log(
+    `${new Date().toISOString()} Done: ${counts.cached} new transcripts cached, ` +
+      `${counts.unavailable} unavailable, ${counts.skipped} already done.`,
+  );
 }
 
 main().catch((err) => {
