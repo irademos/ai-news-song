@@ -1313,6 +1313,7 @@ app.get('/api/spanish-article', async (req, res) => {
     }
     res.json({ content, fromCache: false });
   } catch (error) {
+    console.error(`Unable to fetch article ${url}:`, error.message);
     res.status(502).json({ error: 'Unable to fetch article.', details: error.message });
   }
 });
