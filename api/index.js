@@ -4,6 +4,7 @@ const path = require('path');
 const { Readable } = require('stream');
 const { fetchTopNews } = require('./newsService');
 const { fetchArticleContent } = require('./articleService');
+const { fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl } = require('./youtubeService');
 const { translateStories, translateArticleBySentence } = require('./translationService');
 const { lookupWord } = require('./wordService');
 const { fbGet, fbSet, sanitizePath } = require('./firebaseService');
@@ -1298,7 +1299,7 @@ app.get('/api/spanish-article', async (req, res) => {
   }
 
   try {
-    const content = await fetchArticleContent(url);
+    const content = isYoutubeUrl(url) ? await fetchYoutubeTranscript(url) : await fetchArticleContent(url);
     if (!content) return res.status(404).json({ error: 'No readable content found.' });
     fbSet(key, { content, cached_at: Date.now() }).catch(() => {});
 
@@ -1321,6 +1322,11 @@ const SPANISH_SOURCES = [
   { url: 'https://laopinion.com/feed/', source: 'La Opinión', lang: 'es' },
   { url: 'https://www.democracynow.org/democracynow_spanish.xml', source: 'Democracy Now en Español', lang: 'es' },
   { url: 'https://cnnespanol.cnn.com/feed/', source: 'CNN en Español', lang: 'es' },
+];
+
+// YouTube channels whose video transcripts are read like articles
+const SPANISH_YOUTUBE_CHANNELS = [
+  { channelId: 'UCS0lmlVIYVz2qeWlZ_ynIWg', source: 'AJ+ Español', lang: 'es' },
 ];
 
 async function fetchSpanishSourceStories({ url, source, lang }) {
@@ -1389,7 +1395,10 @@ async function fetchSpanishSourceStories({ url, source, lang }) {
 app.get('/api/spanish-news', async (req, res) => {
   try {
     // Fetch native Spanish sources
-    const spanishResults = await Promise.all(SPANISH_SOURCES.map(fetchSpanishSourceStories));
+    const spanishResults = await Promise.all([
+      ...SPANISH_SOURCES.map(fetchSpanishSourceStories),
+      ...SPANISH_YOUTUBE_CHANNELS.map((channel) => fetchChannelVideos(channel)),
+    ]);
     const nativeSpanish = spanishResults.flat().filter((s) => s.headline);
 
     // Fetch English sources and translate a sample
