@@ -5,7 +5,24 @@
 // home connections. Run this from your own computer (e.g. on a schedule) and the site will
 // serve the cached transcripts without ever calling YouTube itself:
 //
-//   FIREBASE_DATABASE_URL=https://<project>.firebaseio.com npm run cache-transcripts
+//   npm run cache-transcripts
+//
+// FIREBASE_DATABASE_URL is read from the environment, or from the repo's .env file.
+// On Windows, scripts/cache-transcripts.cmd wraps this for Task Scheduler.
+
+const fs = require('fs');
+const path = require('path');
+
+// Load .env before firebaseService reads FIREBASE_DATABASE_URL
+const envFile = path.join(__dirname, '..', '.env');
+if (fs.existsSync(envFile)) {
+  fs.readFileSync(envFile, 'utf8').split(/\r?\n/).forEach((line) => {
+    const match = line.match(/^\s*([\w.]+)\s*=\s*(.*)$/);
+    if (match && !(match[1] in process.env)) {
+      process.env[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
+    }
+  });
+}
 
 const { fbGet, fbSet } = require('../api/firebaseService');
 const {
@@ -17,7 +34,7 @@ const {
 
 async function main() {
   if (!process.env.FIREBASE_DATABASE_URL) {
-    console.error('FIREBASE_DATABASE_URL must be set.');
+    console.error('FIREBASE_DATABASE_URL must be set (in the environment or in .env).');
     process.exit(1);
   }
 
@@ -46,7 +63,7 @@ async function main() {
     }
   }
 
-  console.log(`Done: ${cached} new transcripts cached, ${failed} unavailable.`);
+  console.log(`${new Date().toISOString()} Done: ${cached} new transcripts cached, ${failed} unavailable.`);
 }
 
 main().catch((err) => {

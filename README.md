@@ -36,8 +36,16 @@ The front-end automatically refreshes when reloading the page, so no extra build
 
 Videos from the channels in `SPANISH_YOUTUBE_CHANNELS` (`api/youtubeService.js`) are listed alongside the Spanish news feeds, and their transcripts are shown as the article text. Transcripts are cached in Firebase under `youtube_transcripts/` without expiry.
 
-YouTube often blocks transcript requests from cloud hosts like Vercel. To work around this, pre-fill the cache from a home connection, ideally on a schedule (cron / Task Scheduler):
+YouTube often blocks transcript requests from cloud hosts like Vercel. To work around this, pre-fill the cache from a home connection. Put `FIREBASE_DATABASE_URL=https://<project>.firebaseio.com` in `.env`, then run:
 
 ```bash
-FIREBASE_DATABASE_URL=https://<project>.firebaseio.com npm run cache-transcripts
+npm run cache-transcripts
 ```
+
+To run it every 3 hours on Windows (output goes to `cache-transcripts.log`):
+
+```bat
+schtasks /Create /TN "ai-news-song transcripts" /SC HOURLY /MO 3 /TR "\"C:\path\to\ai-news-song\scripts\cache-transcripts.cmd\""
+```
+
+On macOS/Linux, add a crontab entry: `0 */3 * * * cd /path/to/ai-news-song && npm run cache-transcripts >> cache-transcripts.log 2>&1`
