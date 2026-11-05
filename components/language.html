@@ -135,6 +135,80 @@
       font-size: .8rem;
     }
 
+    /* Library */
+    [hidden] { display: none !important; }
+    .level-section { margin-bottom: 2.5rem; }
+    .level-section__header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: .4rem .9rem;
+      margin-bottom: 1rem;
+      padding-bottom: .6rem;
+      border-bottom: 1px solid rgba(148,163,184,.18);
+    }
+    .level-section__header h2 { font-size: 1.3rem; font-weight: 700; }
+    .level-section__hint { color: var(--muted); font-size: .9rem; }
+    .collection-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+      gap: 1rem;
+    }
+    .collection-card {
+      background: var(--surface);
+      border: 1px solid rgba(148,163,184,.15);
+      border-radius: 1rem;
+      padding: 1.2rem 1.3rem;
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+    }
+    .collection-card h3 { font-size: 1.15rem; font-weight: 700; }
+    .collection-card__author { color: var(--accent); font-size: .88rem; font-weight: 600; }
+    .collection-card__description { color: var(--muted); font-size: .9rem; line-height: 1.5; }
+    .collection-card__stories {
+      list-style: none;
+      margin: .4rem 0 0;
+      padding: 0;
+      border-top: 1px solid rgba(148,163,184,.12);
+    }
+    .library-story {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .75rem;
+      background: none;
+      border: none;
+      border-bottom: 1px solid rgba(148,163,184,.12);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-size: .95rem;
+      padding: .65rem .2rem;
+      text-align: left;
+      transition: color .2s;
+    }
+    .collection-card__stories li:last-child .library-story { border-bottom: none; }
+    .library-story:hover { color: var(--accent); }
+    .library-story__title { display: flex; flex-direction: column; gap: .1rem; }
+    .library-story__byline { color: var(--muted); font-size: .8rem; }
+    .library-story__go { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+    .library-story.read .library-story__go { color: var(--accent2); }
+    .level-badge {
+      display: inline-block;
+      padding: .15rem .55rem;
+      border-radius: 999px;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      background: rgba(52,211,153,.15);
+      color: var(--accent2);
+    }
+    .level-badge--intermedio { background: rgba(245,158,11,.15); color: var(--accent); }
+    .level-badge--avanzado { background: rgba(244,114,182,.15); color: #f472b6; }
+
     /* Story grid */
     .story-grid {
       display: grid;
@@ -711,8 +785,8 @@
     <!-- List view -->
     <div id="listView">
       <header class="page-header">
-        <h1>Noticias en Español</h1>
-        <p>
+        <h1 id="pageTitle">Noticias en Español</h1>
+        <p id="pageIntro">
           Titulares del mundo en español — fuentes originales en español y noticias en inglés traducidas automáticamente.
         </p>
       </header>
@@ -720,6 +794,7 @@
       <div class="view-bar" id="viewBar">
         <button class="source-tab active" type="button" data-view="latest">Últimas noticias</button>
         <button class="source-tab" type="button" data-view="archive">🗂️ Archivo</button>
+        <button class="source-tab" type="button" data-view="library">📚 Biblioteca</button>
         <select class="archive-month" id="archiveMonth" aria-label="Mes del archivo" hidden></select>
       </div>
 
@@ -733,6 +808,8 @@
           Cargando noticias…
         </div>
       </div>
+
+      <div id="libraryView" hidden></div>
     </div>
 
     <!-- Article reader view -->
@@ -753,9 +830,14 @@
       <audio id="ttsAudioEl" style="display:none" preload="none"></audio>
 
       <a class="open-original-link" id="openOriginalLink" href="#" target="_blank" rel="noopener noreferrer">
-        🔗 Ver artículo original
+        🔗 <span id="openOriginalLabel">Ver artículo original</span>
       </a>
     </div>
+
+    <p class="footer-note" id="libraryFooterNote" hidden>
+      Textos de dominio público de <a href="https://es.wikisource.org" target="_blank" rel="noopener">Wikisource en español</a>.<br>
+      <a href="/">← Volver a Daily Spin</a>
+    </p>
 
     <p class="footer-note" id="footerNote">
       Fuentes originales: BBC Mundo, La Opinión, CNN en Español, Democracy Now en Español.<br>
@@ -809,7 +891,9 @@
   <script type="module">
     let allStories = [];
     let activeSource = 'all';
-    let viewMode = 'latest'; // 'latest' | 'archive'
+    let viewMode = 'latest'; // 'latest' | 'archive' | 'library'
+    let library = null; // { levels, collections } from /api/spanish-library
+    let activeLevel = 'all';
     let currentStory = null;
     let activeWordEl = null;
     // Map from sentence index to {original, translated} for translated articles
@@ -829,11 +913,12 @@
       enableAudioBar(false);
       document.getElementById('listView').classList.remove('hidden');
       document.getElementById('articleView').classList.remove('visible');
-      document.getElementById('footerNote').style.display = '';
+      updateListChrome();
       document.getElementById('backBtn').textContent = '← Volver / Back';
       document.getElementById('backBtn').onclick = () => window.location.href = '/';
       closeWordPopup();
       sentenceMap = [];
+      if (viewMode === 'library' && library) renderLibrary();
     }
 
     function showArticle(story) {
@@ -842,20 +927,34 @@
       enableAudioBar(false);
       document.getElementById('listView').classList.add('hidden');
       document.getElementById('articleView').classList.add('visible');
-      document.getElementById('footerNote').style.display = 'none';
+      document.getElementById('footerNote').hidden = true;
+      document.getElementById('libraryFooterNote').hidden = true;
 
-      document.getElementById('backBtn').textContent = '← Volver a las noticias';
+      const isBook = story.type === 'book';
+      document.getElementById('backBtn').textContent = isBook ? '← Volver a la biblioteca' : '← Volver a las noticias';
       document.getElementById('backBtn').onclick = showList;
+      document.getElementById('openOriginalLabel').textContent = isBook ? 'Ver en Wikisource' : 'Ver artículo original';
 
       // Meta badges
       const isNative = story.lang === 'es' && !story.originalLang;
       const source = decodeHtml(story.source || '');
-      document.getElementById('articleMeta').innerHTML = [
-        source ? `<span class="source-chip">${source}</span>` : '',
-        isNative
-          ? '<span class="native-badge">Original ES</span>'
-          : '<span class="translated-badge">Traducido</span>',
-      ].join('');
+      const meta = document.getElementById('articleMeta');
+      if (isBook) {
+        meta.innerHTML = '';
+        meta.append(
+          textChip('span', 'source-chip', story.author),
+          textChip('span', 'story-date', story.collection),
+          levelBadge(story.level),
+          textChip('span', 'native-badge', 'Dominio público'),
+        );
+      } else {
+        meta.innerHTML = [
+          source ? `<span class="source-chip">${source}</span>` : '',
+          isNative
+            ? '<span class="native-badge">Original ES</span>'
+            : '<span class="translated-badge">Traducido</span>',
+        ].join('');
+      }
 
       const headlineEl = document.getElementById('articleHeadline');
       headlineEl.innerHTML = '';
@@ -877,6 +976,27 @@
       const body = document.getElementById('articleBody');
       body.innerHTML = '<div class="status-msg"><div class="spinner"></div><br>Cargando artículo…</div>';
       sentenceMap = [];
+
+      if (story.type === 'book') {
+        try {
+          const res = await fetch(`/api/spanish-library/story?id=${encodeURIComponent(story.id)}`);
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.content) throw new Error(data.error || `HTTP ${res.status}`);
+          if (currentStory !== story) return;
+          if (data.link) document.getElementById('openOriginalLink').href = data.link;
+          renderArticleText(body, data.content);
+          markStoryRead(story.id);
+          enableAudioBar(true);
+        } catch (err) {
+          if (currentStory !== story) return;
+          body.innerHTML = '';
+          const msg = document.createElement('div');
+          msg.className = 'status-msg';
+          msg.textContent = `No se pudo cargar el cuento (${err.message}). Puedes leerlo en Wikisource con el enlace de abajo.`;
+          body.appendChild(msg);
+        }
+        return;
+      }
 
       if (!story.link) {
         renderArticleText(body, (story.summary || story.headline || ''));
@@ -1424,8 +1544,139 @@
       viewMode = mode;
       document.querySelectorAll('#viewBar [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === mode));
       document.getElementById('archiveMonth').hidden = mode !== 'archive';
-      if (mode === 'archive') loadArchive();
+      updateListChrome();
+      if (mode === 'library') loadLibrary();
+      else if (mode === 'archive') loadArchive();
       else loadStories();
+    }
+
+    // Header, footer and panels that differ between the news views and the library.
+    function updateListChrome() {
+      const isLibrary = viewMode === 'library';
+      document.getElementById('pageTitle').textContent = isLibrary ? 'Biblioteca en Español' : 'Noticias en Español';
+      document.getElementById('pageIntro').textContent = isLibrary
+        ? 'Cuentos y leyendas clásicos de dominio público, ordenados por nivel. Toca cualquier palabra para traducirla.'
+        : 'Titulares del mundo en español — fuentes originales en español y noticias en inglés traducidas automáticamente.';
+      document.getElementById('storyGrid').hidden = isLibrary;
+      document.getElementById('libraryView').hidden = !isLibrary;
+      document.getElementById('footerNote').hidden = isLibrary;
+      document.getElementById('libraryFooterNote').hidden = !isLibrary;
+    }
+
+    // ── Library ──────────────────────────────────────────────────
+    const READ_KEY = 'spanishLibraryRead';
+    function readStoryIds() {
+      try { return new Set(JSON.parse(localStorage.getItem(READ_KEY) || '[]')); } catch { return new Set(); }
+    }
+    function markStoryRead(id) {
+      const ids = readStoryIds();
+      if (ids.has(id)) return;
+      ids.add(id);
+      try { localStorage.setItem(READ_KEY, JSON.stringify([...ids])); } catch { /* storage unavailable */ }
+    }
+
+    function textChip(tag, className, text) {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      el.textContent = text;
+      return el;
+    }
+
+    function levelBadge(levelId) {
+      const level = library?.levels.find((l) => l.id === levelId);
+      return textChip('span', `level-badge level-badge--${levelId}`, level ? level.label : levelId);
+    }
+
+    async function loadLibrary() {
+      if (library) {
+        renderLibrary();
+        return;
+      }
+      const container = document.getElementById('libraryView');
+      document.getElementById('sourceTabs').innerHTML = '';
+      container.innerHTML = '<div class="status-msg"><div class="spinner"></div><br>Cargando biblioteca…</div>';
+      try {
+        const res = await fetch('/api/spanish-library');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        library = await res.json();
+        if (viewMode === 'library') renderLibrary();
+      } catch (err) {
+        container.innerHTML = `<div class="status-msg">Error al cargar la biblioteca: ${err.message}</div>`;
+      }
+    }
+
+    function buildLevelTabs() {
+      const tabs = document.getElementById('sourceTabs');
+      tabs.innerHTML = '';
+      [{ id: 'all', label: 'Todos los niveles' }, ...library.levels].forEach((level) => {
+        const btn = textChip('button', 'source-tab' + (level.id === activeLevel ? ' active' : ''), level.label);
+        btn.type = 'button';
+        btn.addEventListener('click', () => {
+          activeLevel = level.id;
+          renderLibrary();
+        });
+        tabs.appendChild(btn);
+      });
+    }
+
+    function renderLibrary() {
+      buildLevelTabs();
+      const container = document.getElementById('libraryView');
+      container.innerHTML = '';
+      const read = readStoryIds();
+      const levels = library.levels.filter((l) => activeLevel === 'all' || l.id === activeLevel);
+
+      levels.forEach((level) => {
+        const collections = library.collections.filter((c) => c.level === level.id);
+        if (!collections.length) return;
+
+        const section = textChip('section', 'level-section', '');
+        const header = textChip('div', 'level-section__header', '');
+        header.append(textChip('h2', '', level.label), textChip('span', 'level-section__hint', level.hint));
+        section.appendChild(header);
+
+        const grid = textChip('div', 'collection-grid', '');
+        collections.forEach((collection) => {
+          const card = textChip('article', 'collection-card', '');
+          card.append(
+            textChip('h3', '', collection.title),
+            textChip('div', 'collection-card__author', collection.year ? `${collection.author} · ${collection.year}` : collection.author),
+            textChip('p', 'collection-card__description', collection.description),
+          );
+
+          const list = textChip('ul', 'collection-card__stories', '');
+          collection.stories.forEach((entry) => {
+            const isRead = read.has(entry.id);
+            const btn = textChip('button', 'library-story' + (isRead ? ' read' : ''), '');
+            btn.type = 'button';
+            const title = textChip('span', 'library-story__title', '');
+            title.appendChild(textChip('span', '', entry.title));
+            if (entry.author !== collection.author) title.appendChild(textChip('span', 'library-story__byline', entry.author));
+            btn.append(title, textChip('span', 'library-story__go', isRead ? '✓ Leído' : 'Leer →'));
+            btn.addEventListener('click', () => {
+              closeWordPopup();
+              closePhrasePopup();
+              showArticle({
+                type: 'book',
+                id: entry.id,
+                headline: entry.title,
+                author: entry.author,
+                collection: collection.title,
+                level: collection.level,
+                link: entry.link,
+                lang: 'es',
+              });
+            });
+            const li = document.createElement('li');
+            li.appendChild(btn);
+            list.appendChild(li);
+          });
+          card.appendChild(list);
+          grid.appendChild(card);
+        });
+        section.appendChild(grid);
+        container.appendChild(section);
+      });
     }
 
     function formatMonth(month) {

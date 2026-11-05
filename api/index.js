@@ -7,6 +7,7 @@ const { fetchArticleContent } = require('./articleService');
 const { SPANISH_YOUTUBE_CHANNELS, fetchChannelVideos, fetchYoutubeTranscript, isYoutubeUrl } = require('./youtubeService');
 const { SPANISH_MEDIUM_CHANNELS, fetchMediumStories, fetchMediumArticle, isMediumUrl } = require('./mediumService');
 const { SPANISH_PODCAST_SOURCES, fetchPodcastStories } = require('./podcastService');
+const { getLibraryCatalog, fetchLibraryStory } = require('./libraryService');
 const { archiveStories, listArchiveMonths, getArchiveMonth, MONTH_PATTERN } = require('./archiveService');
 const { translateStories, translateArticleBySentence } = require('./translationService');
 const { lookupWord } = require('./wordService');
@@ -1326,6 +1327,37 @@ app.get('/api/spanish-article', async (req, res) => {
   } catch (error) {
     console.error(`Unable to fetch article ${url}:`, error.message);
     res.status(502).json({ error: 'Unable to fetch article.', details: error.message });
+  }
+});
+
+// GET /api/spanish-library — the catalogue of free public-domain stories, by level.
+app.get('/api/spanish-library', (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json(getLibraryCatalog());
+});
+
+// Public-domain texts don't change, so cached copies are kept for a month.
+const LIBRARY_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// GET /api/spanish-library/story?id=... — the full text of one library story.
+app.get('/api/spanish-library/story', async (req, res) => {
+  const id = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+  if (!id) return res.status(400).json({ error: 'id parameter is required.' });
+
+  const key = `library_cache/${sanitizePath(id)}`;
+  const cached = await fbGet(key).catch(() => null);
+  if (cached && cached.content && cached.cached_at && Date.now() - cached.cached_at < LIBRARY_CACHE_TTL_MS) {
+    return res.json({ ...cached, fromCache: true });
+  }
+
+  try {
+    const story = await fetchLibraryStory(id);
+    if (!story) return res.status(404).json({ error: 'Unknown story.' });
+    fbSet(key, { ...story, cached_at: Date.now() }).catch(() => {});
+    res.json({ ...story, fromCache: false });
+  } catch (error) {
+    console.error(`Unable to fetch library story ${id}:`, error.message);
+    res.status(502).json({ error: 'Unable to fetch the story.', details: error.message });
   }
 });
 

@@ -36,6 +36,12 @@ The front-end automatically refreshes when reloading the page, so no extra build
 
 The Spanish page's **Archivo** button browses older stories and videos month by month. Stories from the Spanish RSS feeds are saved to Firebase under `spanish_archive/<YYYY-MM>/` as the feeds are loaded (at most every 15 minutes), and the transcript script adds every video it processes. Translated English stories are not archived.
 
+## Spanish library
+
+The Spanish page's **Biblioteca** button lists free public-domain short stories and legends (Quiroga, Bécquer, Clarín, Pardo Bazán, Palma, Darío), grouped by level (Principiante, Intermedio, Avanzado) and collection. They open in the same reader as the news, with word translation and read-aloud. The catalogue lives in `SPANISH_LIBRARY` (`api/libraryService.js`); each story names its Spanish Wikisource page. If a title doesn't resolve, the service tries the `Collection/Story` subpage and then a Wikisource search. Texts are cached in Firebase under `library_cache/` for 30 days.
+
+To add a story, add an entry to a collection's `stories` with an `id`, a `title` and the Wikisource `page` title. To add a collection, include its `level`, `author` and a short `description`.
+
 ## YouTube transcripts on the Spanish page
 
 Videos from the channels in `SPANISH_YOUTUBE_CHANNELS` (`api/youtubeService.js`) are listed alongside the Spanish news feeds, and their transcripts are shown as the article text. Transcripts are cached in Firebase under `youtube_transcripts/` without expiry.
