@@ -170,6 +170,14 @@ function wikisourceHtmlToText(html) {
   let cleaned = html
     .replace(/<(script|style|noscript)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<!--[\s\S]*?-->/g, ' ');
+  // Drop caps (a story's decorated first letter) are drawn by a separate element, sometimes a
+  // tiny table or an image of the letter. Turn those into plain text before tables go.
+  cleaned = cleaned
+    .replace(/<img\b[^>]*\balt="(\p{Lu}\p{Ll}?)"[^>]*>/gu, '$1')
+    .replace(/<table\b[^>]*>((?:(?!<table\b)[\s\S])*?)<\/table>/gi, (table, inner) => {
+      const text = decodeEntities(inner.replace(/<[^>]*>/g, '')).trim();
+      return /^\p{Lu}\p{Ll}?$/u.test(text) ? `<span>${text}</span>` : table;
+    });
   cleaned = removeElements(cleaned, 'table', /<table\b[^>]*>/gi);
   for (const tag of ['div', 'span', 'sup', 'ol', 'ul']) {
     cleaned = removeElements(cleaned, tag, new RegExp(`<${tag}\\b[^>]*${NOISE_CLASS.source}[^>]*>`, 'gi'));
@@ -178,14 +186,19 @@ function wikisourceHtmlToText(html) {
   const paragraphs = [];
   const blockPattern = /<(p|dd|h[2-4])\b[^>]*>([\s\S]*?)<\/\1>/gi;
   let match;
+  let previousEnd = 0;
   while ((match = blockPattern.exec(cleaned)) !== null) {
-    const text = decodeEntities(match[2].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, ''))
+    const between = decodeEntities(cleaned.slice(previousEnd, match.index).replace(/<[^>]*>/g, ' ')).trim();
+    previousEnd = match.index + match[0].length;
+    let text = decodeEntities(match[2].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, ''))
       .split('\n')
       .map((line) => line.replace(/\s+/g, ' ').trim())
       .filter(Boolean)
       .join('\n');
     if (!text) continue;
     if (/^h/i.test(match[1]) && text.length > 80) continue;
+    // A drop cap sits just outside its paragraph, which then starts in lower case ("abía").
+    if (/^\p{Lu}\p{Ll}?$/u.test(between) && /^\p{Ll}/u.test(text)) text = between + text;
     paragraphs.push(text);
   }
 

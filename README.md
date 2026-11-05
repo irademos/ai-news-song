@@ -38,7 +38,7 @@ The Spanish page's **Archivo** button browses older stories and videos month by 
 
 ## Spanish library
 
-The Spanish page's **Biblioteca** button lists free public-domain short stories and legends (Quiroga, Bécquer, Clarín, Pardo Bazán, Palma, Darío), grouped by level (Principiante, Intermedio, Avanzado) and collection. They open in the same reader as the news, with word translation and read-aloud. The catalogue lives in `SPANISH_LIBRARY` (`api/libraryService.js`); each story names its Spanish Wikisource page. If a title doesn't resolve, the service tries the `Collection/Story` subpage and then a Wikisource search. Texts are cached in Firebase under `library_cache/` for 30 days.
+The Spanish page's **Biblioteca** button lists free public-domain short stories and legends (Quiroga, Bécquer, Clarín, Pardo Bazán, Palma, Darío), grouped by level (Principiante, Intermedio, Avanzado) and collection. They open in the same reader as the news, with word translation and read-aloud. The catalogue lives in `SPANISH_LIBRARY` (`api/libraryService.js`); each story names its Spanish Wikisource page. If a title doesn't resolve, the service tries the `Collection/Story` subpage and then a Wikisource search. Texts are cached in Firebase under `library_cache_v2/` (bump the version in `api/index.js` when text extraction changes) for 30 days.
 
 To add a story, add an entry to a collection's `stories` with an `id`, a `title` and the Wikisource `page` title. To add a collection, include its `level`, `author` and a short `description`.
 

@@ -1344,7 +1344,8 @@ app.get('/api/spanish-library/story', async (req, res) => {
   const id = typeof req.query.id === 'string' ? req.query.id.trim() : '';
   if (!id) return res.status(400).json({ error: 'id parameter is required.' });
 
-  const key = `library_cache/${sanitizePath(id)}`;
+  // Bump the version when text extraction changes so stale copies are fetched again.
+  const key = `library_cache_v2/${sanitizePath(id)}`;
   const cached = await fbGet(key).catch(() => null);
   if (cached && cached.content && cached.cached_at && Date.now() - cached.cached_at < LIBRARY_CACHE_TTL_MS) {
     return res.json({ ...cached, fromCache: true });
